@@ -3,13 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (cond) {                                                                \
-    } else {                                                                   \
-      abort();                                                                 \
-    }                                                                          \
-  } while (0)
+// TODO(max): Consider writing this in Rust or Nim for some extra reader
+// appeal.
 
 typedef enum {
   // Load a constant from the constant array at index `arg'.
@@ -23,8 +18,6 @@ typedef enum {
   // Halt the machine.
   HALT,
 } Bytecode;
-
-static unsigned kBytecodeSize = 2;
 
 typedef enum {
   kInt,
@@ -52,6 +45,9 @@ typedef enum {
   kUnknownSymbol = kPrint + 1,
 } Symbol;
 
+// Note: this takes advantage of the fact that in C, not putting anything
+// between the parentheses means that this function can take any number of
+// arguments.
 typedef Object (*Method)();
 
 typedef struct {
@@ -66,16 +62,13 @@ typedef struct {
   Method value;
 } CachedValue;
 
-typedef struct {
-  // Array of `num_opcodes' (op, arg) pairs (total size `num_opcodes' * 2).
-  byte *bytecode;
-  int num_opcodes;
-  // Array of `num_consts' constant values.
-  Object *consts;
-  int num_consts;
-  // Array of `num_opcodes' elements.
-  CachedValue *caches;
-} Code;
+#define CHECK(cond)                                                            \
+  do {                                                                         \
+    if (cond) {                                                                \
+    } else {                                                                   \
+      abort();                                                                 \
+    }                                                                          \
+  } while (0)
 
 Object int_add(Object left, Object right) {
   CHECK(left.type == kInt);
@@ -135,6 +128,17 @@ Method lookup_method(ObjectType type, Symbol name) {
   CHECK(false && "could not find method");
 }
 
+typedef struct {
+  // Array of `num_opcodes' (op, arg) pairs (total size `num_opcodes' * 2).
+  byte *bytecode;
+  int num_opcodes;
+  // Array of `num_consts' constant values.
+  Object *consts;
+  int num_consts;
+  // Array of `num_opcodes' elements.
+  CachedValue *caches;
+} Code;
+
 Code new_code(byte *bytecode, int num_opcodes, Object *consts, int num_consts) {
   Code result;
   result.bytecode = bytecode;
@@ -144,6 +148,8 @@ Code new_code(byte *bytecode, int num_opcodes, Object *consts, int num_consts) {
   result.caches = calloc(num_opcodes, sizeof *result.caches);
   return result;
 }
+
+static unsigned kBytecodeSize = 2;
 
 void eval_code(Code *code, Object *args, int nargs) {
   int pc = 0;
