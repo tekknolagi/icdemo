@@ -11,8 +11,9 @@ typedef enum {
   ARG,
   // Add stack[-2] + stack[-1].
   ADD,
-  // Print the top of the stack.
+  // Pop the top of the stack and print it.
   PRINT,
+  // Halt the machine.
   HALT,
 } Bytecode;
 
@@ -21,7 +22,8 @@ static unsigned kBytecodeSize = 2;
 typedef enum {
   kInt,
   kStr,
-  kError = -1,
+
+  kError = kStr + 1,
 } ObjectType;
 
 typedef struct {
@@ -40,10 +42,12 @@ Object new_str(const char *value) {
 
 typedef enum {
   kAdd,
-  kUnknownSymbol = -1,
+  kPrint,
+
+  kUnknownSymbol = kPrint + 1,
 } Symbol;
 
-typedef Object (*Method)(Object, Object);
+typedef Object (*Method)();
 
 typedef struct {
   Symbol name;
@@ -58,14 +62,17 @@ typedef struct {
 } CachedValue;
 
 typedef struct {
+  // Array of `num_opcodes' (op, arg) pairs (total size `num_opcodes' * 2).
   byte *bytecode;
   int num_opcodes;
+  // Array of `num_consts' constant values.
   Object *consts;
+  int num_consts;
   // Array of `num_opcodes' elements.
   CachedValue *caches;
 } Code;
 
-Object add_ints(Object left, Object right) {
+Object int_add(Object left, Object right) {
   if (left.type != kInt || right.type != kInt) {
     fprintf(stderr, "ERROR: expected int\n");
     return (Object){.type = kError};
@@ -73,7 +80,16 @@ Object add_ints(Object left, Object right) {
   return new_int(left.int_value + right.int_value);
 }
 
-Object add_strs(Object left, Object right) {
+Object int_print(Object obj) {
+  if (obj.type != kInt) {
+    fprintf(stderr, "ERROR: expected int\n");
+    return (Object){.type = kError};
+  }
+  fprintf(stderr, "int: %d\n", obj.int_value);
+  return obj;
+}
+
+Object str_add(Object left, Object right) {
   if (left.type != kStr || right.type != kStr) {
     fprintf(stderr, "ERROR: expected str\n");
     return (Object){.type = kError};
@@ -85,13 +101,24 @@ Object add_strs(Object left, Object right) {
   return new_str(result);
 }
 
+Object str_print(Object obj) {
+  if (obj.type != kStr) {
+    fprintf(stderr, "ERROR: expected str\n");
+    return (Object){.type = kError};
+  }
+  fprintf(stderr, "str: \"%s\"\n", obj.str_value);
+  return obj;
+}
+
 static const MethodDefinition kIntMethods[] = {
-    {kAdd, add_ints},
+    {kAdd, int_add},
+    {kPrint, int_print},
     {kUnknownSymbol, NULL},
 };
 
 static const MethodDefinition kStrMethods[] = {
-    {kAdd, add_strs},
+    {kAdd, str_add},
+    {kPrint, str_print},
     {kUnknownSymbol, NULL},
 };
 
@@ -100,8 +127,12 @@ static const MethodDefinition *kTypes[] = {
     [kStr] = kStrMethods,
 };
 
-Method lookup_method(ObjectType left_type, Symbol name) {
-  const MethodDefinition *table = kTypes[left_type];
+#define ARRAYSIZE(ARR) (sizeof(ARR) / sizeof(ARR)[0])
+
+Method lookup_method(ObjectType type, Symbol name) {
+  assert(type != kError);
+  assert(type < ARRAYSIZE(kTypes) && "out of bounds type");
+  const MethodDefinition *table = kTypes[type];
   for (int i = 0; table[i].method != NULL; i++) {
     if (table[i].name == name) {
       return table[i].method;
@@ -111,23 +142,12 @@ Method lookup_method(ObjectType left_type, Symbol name) {
   return NULL;
 }
 
-void print_object(Object obj) {
-  if (obj.type == kInt) {
-    fprintf(stderr, "int: %d\n", obj.int_value);
-  } else if (obj.type == kStr) {
-    fprintf(stderr, "str: \"%s\"\n", obj.str_value);
-  } else if (obj.type == kError) {
-    fprintf(stderr, "error\n");
-  } else {
-    fprintf(stderr, "<unknown>\n");
-  }
-}
-
-Code new_code(byte *bytecode, int num_opcodes, Object *consts) {
+Code new_code(byte *bytecode, int num_opcodes, Object *consts, int num_consts) {
   Code result;
   result.bytecode = bytecode;
   result.num_opcodes = num_opcodes;
   result.consts = consts;
+  result.num_consts = num_consts;
   result.caches = calloc(num_opcodes, sizeof *result.caches);
   return result;
 }
@@ -145,10 +165,11 @@ void eval_code(Code *code, Object *args, int nargs) {
     byte arg = code->bytecode[pc + 1];
     switch (op) {
     case CONST:
+      assert(arg < code->num_consts && "out of bounds const");
       PUSH(code->consts[arg]);
       break;
     case ARG:
-      assert(arg < nargs && "out of bounds args");
+      assert(arg < nargs && "out of bounds arg");
       PUSH(args[arg]);
       break;
     case ADD: {
@@ -171,7 +192,9 @@ void eval_code(Code *code, Object *args, int nargs) {
     }
     case PRINT: {
       Object obj = POP();
-      print_object(obj);
+      Method method = lookup_method(obj.type, kPrint);
+      assert(method != NULL);
+      (*method)(obj);
       break;
     }
     case HALT:
@@ -204,8 +227,8 @@ int main() {
       new_str("hello "),
       new_str("world"),
   };
-  Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize, consts);
-#define ARRAYSIZE(ARR) (sizeof(ARR) / sizeof(ARR)[0])
+  Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize, consts,
+                       ARRAYSIZE(consts));
   eval_code(&code, int_args, ARRAYSIZE(int_args));
   eval_code(&code, int_args, ARRAYSIZE(int_args));
   eval_code(&code, str_args, ARRAYSIZE(str_args));
