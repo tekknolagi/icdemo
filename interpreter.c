@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,8 @@ typedef enum {
   HALT,
 } Bytecode;
 
+static unsigned kBytecodeSize = 2;
+
 typedef enum {
   kInt,
   kStr,
@@ -24,14 +27,14 @@ typedef enum {
 typedef struct {
   ObjectType type;
   union {
-    char *str_value;
+    const char *str_value;
     int int_value;
   };
 } Object;
 
 Object new_int(int value) { return (Object){.type = kInt, .int_value = value}; }
 
-Object new_str(char *value) {
+Object new_str(const char *value) {
   return (Object){.type = kStr, .str_value = value};
 }
 
@@ -49,8 +52,6 @@ typedef struct {
 
 typedef unsigned char byte;
 
-static unsigned kBytecodeSize = 2;
-
 typedef struct {
   ObjectType key;
   Method value;
@@ -60,6 +61,7 @@ typedef struct {
   byte *bytecode;
   int num_opcodes;
   Object *consts;
+  // Array of `num_opcodes' elements.
   CachedValue *caches;
 } Code;
 
@@ -68,10 +70,7 @@ Object add_ints(Object left, Object right) {
     fprintf(stderr, "ERROR: expected int\n");
     return (Object){.type = kError};
   }
-  Object result;
-  result.type = kInt;
-  result.int_value = left.int_value + right.int_value;
-  return result;
+  return new_int(left.int_value + right.int_value);
 }
 
 Object add_strs(Object left, Object right) {
@@ -79,13 +78,11 @@ Object add_strs(Object left, Object right) {
     fprintf(stderr, "ERROR: expected str\n");
     return (Object){.type = kError};
   }
-  Object result;
-  result.type = kStr;
-  result.str_value =
-      malloc(strlen(left.str_value) + strlen(right.str_value) + 1);
-  strcpy(result.str_value, left.str_value);
-  strcat(result.str_value, right.str_value);
-  return result;
+  int result_size = strlen(left.str_value) + strlen(right.str_value) + 1;
+  char *result = malloc(result_size);
+  strcpy(result, left.str_value);
+  strcat(result, right.str_value);
+  return new_str(result);
 }
 
 static const MethodDefinition kIntMethods[] = {
@@ -110,6 +107,7 @@ Method lookup_method(ObjectType left_type, Symbol name) {
       return table[i].method;
     }
   }
+  fprintf(stderr, "could not find method\n");
   return NULL;
 }
 
@@ -139,7 +137,6 @@ void eval_code(Code *code, Object *args, int nargs) {
 #define STACK_SIZE 100
   Object stack_array[STACK_SIZE];
   Object *stack = stack_array;
-
 #define PUSH(x) *stack++ = (x)
 #define POP() *--stack
 #define CACHE_AT(pc) code->caches[(pc) / kBytecodeSize]
@@ -151,6 +148,7 @@ void eval_code(Code *code, Object *args, int nargs) {
       PUSH(code->consts[arg]);
       break;
     case ARG:
+      assert(arg < nargs && "out of bounds args");
       PUSH(args[arg]);
       break;
     case ADD: {
@@ -161,14 +159,13 @@ void eval_code(Code *code, Object *args, int nargs) {
       if (method == NULL || cached.key != left.type) {
         fprintf(stderr, "updating cache at %d\n", pc);
         method = lookup_method(left.type, kAdd);
+        assert(method != NULL);
         CACHE_AT(pc) = (CachedValue){.key = left.type, .value = method};
       } else {
         fprintf(stderr, "using cached value at %d\n", pc);
       }
       Object result = (*method)(left, right);
-      if (result.type == kError) {
-        abort();
-      }
+      assert(result.type != kError);
       PUSH(result);
       break;
     }
@@ -191,9 +188,9 @@ int main() {
   byte bytecode[] = {/*0:*/ ARG,   0,
                      /*2:*/ ARG,   1,
                      /*4:*/ ADD,   0,
-                     /*8:*/ PRINT, 0,
-                     /*10:*/ HALT, 0};
-  Object consts[4] = {
+                     /*6:*/ PRINT, 0,
+                     /*8:*/ HALT,  0};
+  Object consts[] = {
       new_int(3),
       new_int(4),
       new_str("szechuan "),
@@ -208,9 +205,7 @@ int main() {
       new_str("world"),
   };
   Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize, consts);
-
 #define ARRAYSIZE(ARR) (sizeof(ARR) / sizeof(ARR)[0])
-
   eval_code(&code, int_args, ARRAYSIZE(int_args));
   eval_code(&code, int_args, ARRAYSIZE(int_args));
   eval_code(&code, str_args, ARRAYSIZE(str_args));
