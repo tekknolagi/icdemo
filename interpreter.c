@@ -29,6 +29,12 @@ typedef struct {
   };
 } Object;
 
+Object new_int(int value) { return (Object){.type = kInt, .int_value = value}; }
+
+Object new_str(char *value) {
+  return (Object){.type = kStr, .str_value = value};
+}
+
 typedef enum {
   kAdd,
   kUnknownSymbol = -1,
@@ -188,23 +194,26 @@ int main() {
                      /*8:*/ PRINT, 0,
                      /*10:*/ HALT, 0};
   Object consts[4] = {
-      (Object){.type = kInt, .int_value = 3},
-      (Object){.type = kInt, .int_value = 4},
-      (Object){.type = kStr, .str_value = "szechuan "},
-      (Object){.type = kStr, .str_value = "broccoli"},
+      new_int(3),
+      new_int(4),
+      new_str("szechuan "),
+      new_str("broccoli"),
   };
   Object int_args[] = {
-      (Object){.type = kInt, .int_value = 5},
-      (Object){.type = kInt, .int_value = 10},
+      new_int(5),
+      new_int(10),
   };
   Object str_args[] = {
-      (Object){.type = kStr, .str_value = "hello "},
-      (Object){.type = kStr, .str_value = "world"},
+      new_str("hello "),
+      new_str("world"),
   };
   Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize, consts);
-  eval_code(&code, int_args, sizeof int_args / sizeof int_args[0]);
-  eval_code(&code, int_args, sizeof int_args / sizeof int_args[0]);
-  eval_code(&code, str_args, sizeof str_args / sizeof str_args[0]);
-  eval_code(&code, str_args, sizeof str_args / sizeof str_args[0]);
+
+#define ARRAYSIZE(ARR) (sizeof(ARR) / sizeof(ARR)[0])
+
+  eval_code(&code, int_args, ARRAYSIZE(int_args));
+  eval_code(&code, int_args, ARRAYSIZE(int_args));
+  eval_code(&code, str_args, ARRAYSIZE(str_args);
+  eval_code(&code, str_args, ARRAYSIZE(str_args);
   free(code.caches);
 }
