@@ -87,12 +87,12 @@ Object add_strs(Object left, Object right) {
 
 static const MethodDefinition kIntMethods[] = {
     {kAdd, add_ints},
-    {kError, NULL},
+    {kUnknownSymbol, NULL},
 };
 
 static const MethodDefinition kStrMethods[] = {
     {kAdd, add_strs},
-    {kError, NULL},
+    {kUnknownSymbol, NULL},
 };
 
 static const MethodDefinition *kTypes[] = {
