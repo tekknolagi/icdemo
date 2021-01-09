@@ -223,5 +223,4 @@ int main() {
   eval_code(&code, int_args, ARRAYSIZE(int_args));
   eval_code(&code, str_args, ARRAYSIZE(str_args));
   eval_code(&code, str_args, ARRAYSIZE(str_args));
-  free(code.caches);
 }
