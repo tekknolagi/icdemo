@@ -10,15 +10,13 @@ typedef enum {
   ADD,
   // Print the top of the stack.
   PRINT,
-  // Inspect (but do not pop) the top element on the stack. If less than 100,
-  // set pc to arg.
-  JUMP_IF_LESS_THAN_ONE_HUNDRED,
   HALT,
 } Bytecode;
 
 typedef enum {
   kInt,
   kStr,
+  kError = -1,
 } ObjectType;
 
 typedef struct {
@@ -29,14 +27,34 @@ typedef struct {
   };
 } Object;
 
-typedef unsigned char byte;
-
-static unsigned kStackSize = 100;
-static unsigned kBytecodeSize = 2;
+typedef enum {
+  kAdd,
+  kUnknownSymbol = -1,
+} Symbol;
 
 typedef Object (*Method)(Object, Object);
 
+typedef struct {
+  Symbol name;
+  Method method;
+} MethodDefinition;
+
+typedef unsigned char byte;
+
+static unsigned kBytecodeSize = 2;
+
+typedef struct {
+  byte *bytecode;
+  int num_opcodes;
+  Object *consts;
+  Method *caches;
+} Code;
+
 Object add_ints(Object left, Object right) {
+  if (left.type != kInt || right.type != kInt) {
+    fprintf(stderr, "ERROR: expected int\n");
+    return (Object){.type = kError};
+  }
   Object result;
   result.type = kInt;
   result.int_value = left.int_value + right.int_value;
@@ -44,6 +62,10 @@ Object add_ints(Object left, Object right) {
 }
 
 Object add_strs(Object left, Object right) {
+  if (left.type != kStr || right.type != kStr) {
+    fprintf(stderr, "ERROR: expected str\n");
+    return (Object){.type = kError};
+  }
   Object result;
   result.type = kStr;
   result.str_value =
@@ -53,15 +75,29 @@ Object add_strs(Object left, Object right) {
   return result;
 }
 
-Method lookup_method(ObjectType left_type, ObjectType right_type) {
-  if (left_type == kInt && right_type == kInt) {
-    return add_ints;
+static const MethodDefinition kIntMethods[] = {
+    {kAdd, add_ints},
+    {kError, NULL},
+};
+
+static const MethodDefinition kStrMethods[] = {
+    {kAdd, add_strs},
+    {kError, NULL},
+};
+
+static const MethodDefinition *kTypes[] = {
+    [kInt] = kIntMethods,
+    [kStr] = kStrMethods,
+};
+
+Method lookup_method(ObjectType left_type, Symbol name) {
+  const MethodDefinition *table = kTypes[left_type];
+  for (int i = 0; table[i].method != NULL; i++) {
+    if (table[i].name == name) {
+      return table[i].method;
+    }
   }
-  if (left_type == kStr && right_type == kStr) {
-    return add_strs;
-  }
-  fprintf(stderr, "type error; cannot operate on str and int");
-  abort();
+  return NULL;
 }
 
 void print_object(Object obj) {
@@ -69,53 +105,60 @@ void print_object(Object obj) {
     fprintf(stderr, "int: %d\n", obj.int_value);
   } else if (obj.type == kStr) {
     fprintf(stderr, "str: \"%s\"\n", obj.str_value);
+  } else if (obj.type == kError) {
+    fprintf(stderr, "error\n");
   } else {
     fprintf(stderr, "<unknown>\n");
   }
 }
 
-void eval_code(byte *bytecode, int num_opcodes, Object *consts) {
+Code new_code(byte *bytecode, int num_opcodes, Object *consts) {
+  Code result;
+  result.bytecode = bytecode;
+  result.num_opcodes = num_opcodes;
+  result.consts = consts;
+  result.caches = calloc(num_opcodes, sizeof *result.caches);
+  return result;
+}
+
+void eval_code(Code *code) {
   int pc = 0;
-  Object *stack = calloc(kStackSize, sizeof *stack);
-  Method *caches = calloc(num_opcodes, sizeof *caches);
+#define STACK_SIZE 100
+  Object stack_array[STACK_SIZE];
+  Object *stack = stack_array;
 
 #define PUSH(x) *stack++ = (x)
 #define POP() *--stack
   while (true) {
-    byte op = bytecode[pc];
-    byte arg = bytecode[pc + 1];
+    byte op = code->bytecode[pc];
+    byte arg = code->bytecode[pc + 1];
     switch (op) {
     case CONST:
-      PUSH(consts[arg]);
+      PUSH(code->consts[arg]);
       break;
     case ADD: {
       Object right = POP();
       Object left = POP();
-      Method cached = caches[pc >> 1];
+      // TODO(max): Use left hand side type as cache key; check and relookup if
+      // mismatch
+      Method cached = code->caches[pc / kBytecodeSize];
       if (cached == NULL) {
         fprintf(stderr, "updating cache at %d\n", pc);
-        cached = caches[pc >> 1] = lookup_method(left.type, right.type);
+        cached = code->caches[pc / kBytecodeSize] =
+            lookup_method(left.type, kAdd);
       } else {
         fprintf(stderr, "have cached value at %d\n", pc);
       }
       Object result = (*cached)(left, right);
+      if (result.type == kError) {
+        abort();
+      }
       PUSH(result);
       break;
     }
     case PRINT: {
       Object obj = POP();
       print_object(obj);
-      break;
-    }
-    case JUMP_IF_LESS_THAN_ONE_HUNDRED: {
-      Object obj = *(stack - 1);
-      if (obj.type != kInt) {
-        abort();
-      }
-      if (obj.int_value < 100) {
-        pc = arg;
-        continue;
-      }
       break;
     }
     case HALT:
@@ -129,23 +172,20 @@ void eval_code(byte *bytecode, int num_opcodes, Object *consts) {
 }
 
 int main() {
-  byte bytecode[] = {/*0:*/ CONST,
-                     0,
-                     /*2:*/ CONST,
-                     1,
-                     /*4:*/ ADD,
-                     0,
-                     /*6:*/ JUMP_IF_LESS_THAN_ONE_HUNDRED,
-                     2,
-                     /*8:*/ PRINT,
-                     0,
-                     /*10:*/ HALT,
-                     0};
+  byte bytecode[] = {/*0:*/ CONST, 0,
+                     /*2:*/ CONST, 1,
+                     /*4:*/ ADD,   0,
+                     /*8:*/ PRINT, 0,
+                     /*10:*/ HALT, 0};
   Object consts[4] = {
       (Object){.type = kInt, .int_value = 5},
       (Object){.type = kInt, .int_value = 10},
       (Object){.type = kStr, .str_value = "hello "},
       (Object){.type = kStr, .str_value = "world"},
   };
-  eval_code(bytecode, sizeof bytecode / 2, consts);
+  Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize, consts);
+  eval_code(&code);
+  eval_code(&code);
+  eval_code(&code);
+  free(code.caches);
 }
