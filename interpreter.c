@@ -4,8 +4,10 @@
 #include <string.h>
 
 typedef enum {
-  // Load a constant from the constant array at index arg.
+  // Load a constant from the constant array at index `arg'.
   CONST,
+  // Load a value from the arguments array at index `arg'.
+  ARG,
   // Add stack[-2] + stack[-1].
   ADD,
   // Print the top of the stack.
@@ -44,10 +46,15 @@ typedef unsigned char byte;
 static unsigned kBytecodeSize = 2;
 
 typedef struct {
+  ObjectType key;
+  Method value;
+} CachedValue;
+
+typedef struct {
   byte *bytecode;
   int num_opcodes;
   Object *consts;
-  Method *caches;
+  CachedValue *caches;
 } Code;
 
 Object add_ints(Object left, Object right) {
@@ -121,7 +128,7 @@ Code new_code(byte *bytecode, int num_opcodes, Object *consts) {
   return result;
 }
 
-void eval_code(Code *code) {
+void eval_code(Code *code, Object *args, int nargs) {
   int pc = 0;
 #define STACK_SIZE 100
   Object stack_array[STACK_SIZE];
@@ -129,6 +136,7 @@ void eval_code(Code *code) {
 
 #define PUSH(x) *stack++ = (x)
 #define POP() *--stack
+#define CACHE_AT(pc) code->caches[(pc) / kBytecodeSize]
   while (true) {
     byte op = code->bytecode[pc];
     byte arg = code->bytecode[pc + 1];
@@ -136,20 +144,22 @@ void eval_code(Code *code) {
     case CONST:
       PUSH(code->consts[arg]);
       break;
+    case ARG:
+      PUSH(args[arg]);
+      break;
     case ADD: {
       Object right = POP();
       Object left = POP();
-      // TODO(max): Use left hand side type as cache key; check and relookup if
-      // mismatch
-      Method cached = code->caches[pc / kBytecodeSize];
-      if (cached == NULL) {
+      CachedValue cached = CACHE_AT(pc);
+      Method method = cached.value;
+      if (method == NULL || cached.key != left.type) {
         fprintf(stderr, "updating cache at %d\n", pc);
-        cached = code->caches[pc / kBytecodeSize] =
-            lookup_method(left.type, kAdd);
+        method = lookup_method(left.type, kAdd);
+        CACHE_AT(pc) = (CachedValue){.key = left.type, .value = method};
       } else {
-        fprintf(stderr, "have cached value at %d\n", pc);
+        fprintf(stderr, "using cached value at %d\n", pc);
       }
-      Object result = (*cached)(left, right);
+      Object result = (*method)(left, right);
       if (result.type == kError) {
         abort();
       }
@@ -172,20 +182,29 @@ void eval_code(Code *code) {
 }
 
 int main() {
-  byte bytecode[] = {/*0:*/ CONST, 0,
-                     /*2:*/ CONST, 1,
+  byte bytecode[] = {/*0:*/ ARG,   0,
+                     /*2:*/ ARG,   1,
                      /*4:*/ ADD,   0,
                      /*8:*/ PRINT, 0,
                      /*10:*/ HALT, 0};
   Object consts[4] = {
+      (Object){.type = kInt, .int_value = 3},
+      (Object){.type = kInt, .int_value = 4},
+      (Object){.type = kStr, .str_value = "szechuan "},
+      (Object){.type = kStr, .str_value = "broccoli"},
+  };
+  Object int_args[] = {
       (Object){.type = kInt, .int_value = 5},
       (Object){.type = kInt, .int_value = 10},
+  };
+  Object str_args[] = {
       (Object){.type = kStr, .str_value = "hello "},
       (Object){.type = kStr, .str_value = "world"},
   };
   Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize, consts);
-  eval_code(&code);
-  eval_code(&code);
-  eval_code(&code);
+  eval_code(&code, int_args, sizeof int_args / sizeof int_args[0]);
+  eval_code(&code, int_args, sizeof int_args / sizeof int_args[0]);
+  eval_code(&code, str_args, sizeof str_args / sizeof str_args[0]);
+  eval_code(&code, str_args, sizeof str_args / sizeof str_args[0]);
   free(code.caches);
 }
