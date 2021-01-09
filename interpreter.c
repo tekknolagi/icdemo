@@ -1,8 +1,15 @@
-#include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define CHECK(cond)                                                            \
+  do {                                                                         \
+    if (cond) {                                                                \
+    } else {                                                                   \
+      abort();                                                                 \
+    }                                                                          \
+  } while (0)
 
 typedef enum {
   // Load a constant from the constant array at index `arg'.
@@ -22,8 +29,6 @@ static unsigned kBytecodeSize = 2;
 typedef enum {
   kInt,
   kStr,
-
-  kError = kStr + 1,
 } ObjectType;
 
 typedef struct {
@@ -73,27 +78,20 @@ typedef struct {
 } Code;
 
 Object int_add(Object left, Object right) {
-  if (left.type != kInt || right.type != kInt) {
-    fprintf(stderr, "ERROR: expected int\n");
-    return (Object){.type = kError};
-  }
+  CHECK(left.type == kInt);
+  CHECK(right.type == kInt);
   return new_int(left.int_value + right.int_value);
 }
 
 Object int_print(Object obj) {
-  if (obj.type != kInt) {
-    fprintf(stderr, "ERROR: expected int\n");
-    return (Object){.type = kError};
-  }
+  CHECK(obj.type == kInt);
   fprintf(stderr, "int: %d\n", obj.int_value);
   return obj;
 }
 
 Object str_add(Object left, Object right) {
-  if (left.type != kStr || right.type != kStr) {
-    fprintf(stderr, "ERROR: expected str\n");
-    return (Object){.type = kError};
-  }
+  CHECK(left.type == kStr);
+  CHECK(right.type == kStr);
   int result_size = strlen(left.str_value) + strlen(right.str_value) + 1;
   char *result = malloc(result_size);
   strcpy(result, left.str_value);
@@ -102,10 +100,7 @@ Object str_add(Object left, Object right) {
 }
 
 Object str_print(Object obj) {
-  if (obj.type != kStr) {
-    fprintf(stderr, "ERROR: expected str\n");
-    return (Object){.type = kError};
-  }
+  CHECK(obj.type == kStr);
   fprintf(stderr, "str: \"%s\"\n", obj.str_value);
   return obj;
 }
@@ -130,16 +125,14 @@ static const MethodDefinition *kTypes[] = {
 #define ARRAYSIZE(ARR) (sizeof(ARR) / sizeof(ARR)[0])
 
 Method lookup_method(ObjectType type, Symbol name) {
-  assert(type != kError);
-  assert(type < ARRAYSIZE(kTypes) && "out of bounds type");
+  CHECK(type < ARRAYSIZE(kTypes) && "out of bounds type");
   const MethodDefinition *table = kTypes[type];
   for (int i = 0; table[i].method != NULL; i++) {
     if (table[i].name == name) {
       return table[i].method;
     }
   }
-  fprintf(stderr, "could not find method\n");
-  return NULL;
+  CHECK(false && "could not find method");
 }
 
 Code new_code(byte *bytecode, int num_opcodes, Object *consts, int num_consts) {
@@ -165,11 +158,11 @@ void eval_code(Code *code, Object *args, int nargs) {
     byte arg = code->bytecode[pc + 1];
     switch (op) {
     case CONST:
-      assert(arg < code->num_consts && "out of bounds const");
+      CHECK(arg < code->num_consts && "out of bounds const");
       PUSH(code->consts[arg]);
       break;
     case ARG:
-      assert(arg < nargs && "out of bounds arg");
+      CHECK(arg < nargs && "out of bounds arg");
       PUSH(args[arg]);
       break;
     case ADD: {
@@ -180,20 +173,17 @@ void eval_code(Code *code, Object *args, int nargs) {
       if (method == NULL || cached.key != left.type) {
         fprintf(stderr, "updating cache at %d\n", pc);
         method = lookup_method(left.type, kAdd);
-        assert(method != NULL);
         CACHE_AT(pc) = (CachedValue){.key = left.type, .value = method};
       } else {
         fprintf(stderr, "using cached value at %d\n", pc);
       }
       Object result = (*method)(left, right);
-      assert(result.type != kError);
       PUSH(result);
       break;
     }
     case PRINT: {
       Object obj = POP();
       Method method = lookup_method(obj.type, kPrint);
-      assert(method != NULL);
       (*method)(obj);
       break;
     }
