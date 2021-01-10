@@ -32,7 +32,9 @@ typedef struct {
   };
 } Object;
 
-Object new_int(int value) { return (Object){.type = kInt, .int_value = value}; }
+Object new_int(int value) {
+  return (Object){.type = kInt, .int_value = value};
+}
 
 Object new_str(const char *value) {
   return (Object){.type = kStr, .str_value = value};
@@ -62,12 +64,11 @@ typedef struct {
   Method value;
 } CachedValue;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (cond) {                                                                \
-    } else {                                                                   \
-      abort();                                                                 \
-    }                                                                          \
+#define CHECK(cond) \
+  do {              \
+    if (!(cond)) {  \
+      abort();      \
+    }               \
   } while (0)
 
 Object int_add(Object left, Object right) {
@@ -139,7 +140,8 @@ typedef struct {
   CachedValue *caches;
 } Code;
 
-Code new_code(byte *bytecode, int num_opcodes, Object *consts, int num_consts) {
+Code new_code(byte *bytecode, int num_opcodes, Object *consts,
+              int num_consts) {
   Code result;
   result.bytecode = bytecode;
   result.num_opcodes = num_opcodes;
@@ -163,41 +165,41 @@ void eval_code(Code *code, Object *args, int nargs) {
     byte op = code->bytecode[pc];
     byte arg = code->bytecode[pc + 1];
     switch (op) {
-    case CONST:
-      CHECK(arg < code->num_consts && "out of bounds const");
-      PUSH(code->consts[arg]);
-      break;
-    case ARG:
-      CHECK(arg < nargs && "out of bounds arg");
-      PUSH(args[arg]);
-      break;
-    case ADD: {
-      Object right = POP();
-      Object left = POP();
-      CachedValue cached = CACHE_AT(pc);
-      Method method = cached.value;
-      if (method == NULL || cached.key != left.type) {
-        fprintf(stderr, "updating cache at %d\n", pc);
-        method = lookup_method(left.type, kAdd);
-        CACHE_AT(pc) = (CachedValue){.key = left.type, .value = method};
-      } else {
-        fprintf(stderr, "using cached value at %d\n", pc);
+      case CONST:
+        CHECK(arg < code->num_consts && "out of bounds const");
+        PUSH(code->consts[arg]);
+        break;
+      case ARG:
+        CHECK(arg < nargs && "out of bounds arg");
+        PUSH(args[arg]);
+        break;
+      case ADD: {
+        Object right = POP();
+        Object left = POP();
+        CachedValue cached = CACHE_AT(pc);
+        Method method = cached.value;
+        if (method == NULL || cached.key != left.type) {
+          fprintf(stderr, "updating cache at %d\n", pc);
+          method = lookup_method(left.type, kAdd);
+          CACHE_AT(pc) = (CachedValue){.key = left.type, .value = method};
+        } else {
+          fprintf(stderr, "using cached value at %d\n", pc);
+        }
+        Object result = (*method)(left, right);
+        PUSH(result);
+        break;
       }
-      Object result = (*method)(left, right);
-      PUSH(result);
-      break;
-    }
-    case PRINT: {
-      Object obj = POP();
-      Method method = lookup_method(obj.type, kPrint);
-      (*method)(obj);
-      break;
-    }
-    case HALT:
-      return;
-    default:
-      fprintf(stderr, "unknown opcode %d\n", op);
-      abort();
+      case PRINT: {
+        Object obj = POP();
+        Method method = lookup_method(obj.type, kPrint);
+        (*method)(obj);
+        break;
+      }
+      case HALT:
+        return;
+      default:
+        fprintf(stderr, "unknown opcode %d\n", op);
+        abort();
     }
     pc += kBytecodeSize;
   }
