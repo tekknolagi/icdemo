@@ -91,6 +91,10 @@ static const MethodDefinition kStrMethods[] = {
     {kUnknownSymbol, NULL},
 };
 
+// I represent the type table differently from the method tables. I figure the
+// method tables will be sparsely populated (not every type will implement
+// every method) but the type table should contain every type. This is not an
+// essential design decision.
 static const MethodDefinition *kTypes[] = {
     [kInt] = kIntMethods,
     [kStr] = kStrMethods,
