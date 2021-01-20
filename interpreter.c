@@ -66,7 +66,7 @@ typedef enum {
   kAdd,
   kPrint,
 
-  kUnknownSymbol = kPrint + 1,
+  kUnknownSymbol,
 } Symbol;
 
 // Note: this takes advantage of the fact that in C, not putting anything
