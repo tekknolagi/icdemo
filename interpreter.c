@@ -122,6 +122,8 @@ typedef enum {
   ARG,
   // Add stack[-2] + stack[-1].
   ADD,
+  // Add stack[-2] + stack[-1] using cached method.
+  ADD_CACHED,
   // Specialized ADD for integers.
   ADD_INT,
   // Pop the top of the stack and print it.
@@ -162,11 +164,6 @@ static FORCE_INLINE void push(Frame *frame, Object value) {
 static FORCE_INLINE Object pop(Frame *frame) {
   CHECK(frame->stack > frame->stack_array && "stack underflow");
   return *--frame->stack;
-}
-
-static FORCE_INLINE Object peek(Frame *frame, int pos) {
-  CHECK(frame->stack - pos >= frame->stack_array && "stack underflow");
-  return frame->stack[-pos];
 }
 
 void init_frame(Frame *frame, Code *code) {
@@ -214,22 +211,16 @@ static FORCE_INLINE CachedValue cache_at(Frame *frame) {
   return frame->code->caches[frame->pc / kBytecodeSize];
 }
 
-static FORCE_INLINE void cache_at_put(Frame *frame, CachedValue value) {
-  frame->code->caches[frame->pc / kBytecodeSize] = value;
+static FORCE_INLINE void cache_at_put(Frame *frame, ObjectType key,
+                                      Method value) {
+  frame->code->caches[frame->pc / kBytecodeSize] =
+      (CachedValue){.key = key, .value = value};
 }
 
-void do_add_cached(Frame *frame) {
-  Object right = pop(frame);
-  Object left = pop(frame);
-  CachedValue cached = cache_at(frame);
-  Method method = cached.value;
-  if (method == NULL || cached.key != left.type) {
-    fprintf(stderr, "updating cache at %d\n", frame->pc);
-    method = lookup_method(left.type, kAdd);
-    cache_at_put(frame, (CachedValue){.key = left.type, .value = method});
-  } else {
-    fprintf(stderr, "using cached value at %d\n", frame->pc);
-  }
+void add_update_cache(Frame *frame, Object left, Object right) {
+  Method method = lookup_method(left.type, kAdd);
+  fprintf(stderr, "updating cache at %d\n", frame->pc);
+  cache_at_put(frame, left.type, method);
   Object result = (*method)(left, right);
   push(frame, result);
 }
@@ -246,7 +237,17 @@ void eval_code_cached(Code *code, Object *args, int nargs) {
         push(&frame, args[arg]);
         break;
       case ADD: {
-        do_add_cached(&frame);
+        Object right = pop(&frame);
+        Object left = pop(&frame);
+        CachedValue cached = cache_at(&frame);
+        Method method = cached.value;
+        if (method == NULL || cached.key != left.type) {
+          add_update_cache(&frame, left, right);
+          break;
+        }
+        fprintf(stderr, "using cached value at %d\n", frame.pc);
+        Object result = (*method)(left, right);
+        push(&frame, result);
         break;
       }
       case PRINT: {
@@ -265,10 +266,7 @@ void eval_code_cached(Code *code, Object *args, int nargs) {
   }
 }
 
-void do_add_int(Frame *frame) {
-  Object right = pop(frame);
-  Object left = pop(frame);
-  // Assume int
+void do_add_int(Frame *frame, Object left, Object right) {
   Object result = int_add(left, right);
   push(frame, result);
 }
@@ -285,24 +283,40 @@ void eval_code_quickening(Code *code, Object *args, int nargs) {
         push(&frame, args[arg]);
         break;
       case ADD: {
-        if (peek(&frame, 2).type == kInt) {
-          // Rewrite to specialized handler
-          fprintf(stderr, "rewriting ADD to ADD_INT at %d\n", frame.pc);
+        Object right = pop(&frame);
+        Object left = pop(&frame);
+        if (left.type == kInt) {
+          do_add_int(&frame, left, right);
           code->bytecode[frame.pc] = ADD_INT;
-          do_add_int(&frame);
           break;
         }
-        do_add_cached(&frame);
+        add_update_cache(&frame, left, right);
+        code->bytecode[frame.pc] = ADD_CACHED;
+        break;
+      }
+      case ADD_CACHED: {
+        Object right = pop(&frame);
+        Object left = pop(&frame);
+        CachedValue cached = cache_at(&frame);
+        if (cached.key != left.type) {
+          add_update_cache(&frame, left, right);
+          break;
+        }
+        fprintf(stderr, "using cached value at %d\n", frame.pc);
+        Method method = cached.value;
+        Object result = (*method)(left, right);
+        push(&frame, result);
         break;
       }
       case ADD_INT: {
-        if (peek(&frame, 2).type != kInt) {
-          // Rewrite to generic handler
-          code->bytecode[frame.pc] = ADD;
-          do_add_cached(&frame);
+        Object right = pop(&frame);
+        Object left = pop(&frame);
+        if (left.type != kInt) {
+          add_update_cache(&frame, left, right);
+          code->bytecode[frame.pc] = ADD_CACHED;
           break;
         }
-        do_add_int(&frame);
+        do_add_int(&frame, left, right);
         break;
       }
       case PRINT: {
