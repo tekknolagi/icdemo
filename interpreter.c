@@ -152,50 +152,50 @@ typedef struct {
   Object *stack;
   Code *code;
   int pc;
-} State;
+} Frame;
 
-static FORCE_INLINE void push(State *state, Object value) {
-  CHECK(state->stack - state->stack_array < STACK_SIZE && "stack overflow");
-  *state->stack++ = value;
+static FORCE_INLINE void push(Frame *frame, Object value) {
+  CHECK(frame->stack - frame->stack_array < STACK_SIZE && "stack overflow");
+  *frame->stack++ = value;
 }
 
-static FORCE_INLINE Object pop(State *state) {
-  CHECK(state->stack > state->stack_array && "stack underflow");
-  return *--state->stack;
+static FORCE_INLINE Object pop(Frame *frame) {
+  CHECK(frame->stack > frame->stack_array && "stack underflow");
+  return *--frame->stack;
 }
 
-static FORCE_INLINE Object peek(State *state, int pos) {
-  CHECK(state->stack - pos >= state->stack_array && "stack underflow");
-  return state->stack[-pos];
+static FORCE_INLINE Object peek(Frame *frame, int pos) {
+  CHECK(frame->stack - pos >= frame->stack_array && "stack underflow");
+  return frame->stack[-pos];
 }
 
-void init_state(State *state, Code *code) {
-  state->pc = 0;
-  state->stack = state->stack_array;
-  state->code = code;
+void init_frame(Frame *frame, Code *code) {
+  frame->pc = 0;
+  frame->stack = frame->stack_array;
+  frame->code = code;
 }
 
 void eval_code_uncached(Code *code, Object *args, int nargs) {
-  State state;
-  init_state(&state, code);
+  Frame frame;
+  init_frame(&frame, code);
   while (true) {
-    Opcode op = code->bytecode[state.pc];
-    byte arg = code->bytecode[state.pc + 1];
+    Opcode op = code->bytecode[frame.pc];
+    byte arg = code->bytecode[frame.pc + 1];
     switch (op) {
       case ARG:
         CHECK(arg < nargs && "out of bounds arg");
-        push(&state, args[arg]);
+        push(&frame, args[arg]);
         break;
       case ADD: {
-        Object right = pop(&state);
-        Object left = pop(&state);
+        Object right = pop(&frame);
+        Object left = pop(&frame);
         Method method = lookup_method(left.type, kAdd);
         Object result = (*method)(left, right);
-        push(&state, result);
+        push(&frame, result);
         break;
       }
       case PRINT: {
-        Object obj = pop(&state);
+        Object obj = pop(&frame);
         Method method = lookup_method(obj.type, kPrint);
         (*method)(obj);
         break;
@@ -206,51 +206,51 @@ void eval_code_uncached(Code *code, Object *args, int nargs) {
         fprintf(stderr, "unknown opcode %d\n", op);
         abort();
     }
-    state.pc += kBytecodeSize;
+    frame.pc += kBytecodeSize;
   }
 }
 
-static FORCE_INLINE CachedValue cache_at(State *state) {
-  return state->code->caches[state->pc / kBytecodeSize];
+static FORCE_INLINE CachedValue cache_at(Frame *frame) {
+  return frame->code->caches[frame->pc / kBytecodeSize];
 }
 
-static FORCE_INLINE void cache_at_put(State *state, CachedValue value) {
-  state->code->caches[state->pc / kBytecodeSize] = value;
+static FORCE_INLINE void cache_at_put(Frame *frame, CachedValue value) {
+  frame->code->caches[frame->pc / kBytecodeSize] = value;
 }
 
-void do_add_cached(State *state) {
-  Object right = pop(state);
-  Object left = pop(state);
-  CachedValue cached = cache_at(state);
+void do_add_cached(Frame *frame) {
+  Object right = pop(frame);
+  Object left = pop(frame);
+  CachedValue cached = cache_at(frame);
   Method method = cached.value;
   if (method == NULL || cached.key != left.type) {
-    fprintf(stderr, "updating cache at %d\n", state->pc);
+    fprintf(stderr, "updating cache at %d\n", frame->pc);
     method = lookup_method(left.type, kAdd);
-    cache_at_put(state, (CachedValue){.key = left.type, .value = method});
+    cache_at_put(frame, (CachedValue){.key = left.type, .value = method});
   } else {
-    fprintf(stderr, "using cached value at %d\n", state->pc);
+    fprintf(stderr, "using cached value at %d\n", frame->pc);
   }
   Object result = (*method)(left, right);
-  push(state, result);
+  push(frame, result);
 }
 
 void eval_code_cached(Code *code, Object *args, int nargs) {
-  State state;
-  init_state(&state, code);
+  Frame frame;
+  init_frame(&frame, code);
   while (true) {
-    Opcode op = code->bytecode[state.pc];
-    byte arg = code->bytecode[state.pc + 1];
+    Opcode op = code->bytecode[frame.pc];
+    byte arg = code->bytecode[frame.pc + 1];
     switch (op) {
       case ARG:
         CHECK(arg < nargs && "out of bounds arg");
-        push(&state, args[arg]);
+        push(&frame, args[arg]);
         break;
       case ADD: {
-        do_add_cached(&state);
+        do_add_cached(&frame);
         break;
       }
       case PRINT: {
-        Object obj = pop(&state);
+        Object obj = pop(&frame);
         Method method = lookup_method(obj.type, kPrint);
         (*method)(obj);
         break;
@@ -261,52 +261,52 @@ void eval_code_cached(Code *code, Object *args, int nargs) {
         fprintf(stderr, "unknown opcode %d\n", op);
         abort();
     }
-    state.pc += kBytecodeSize;
+    frame.pc += kBytecodeSize;
   }
 }
 
-void do_add_int(State *state) {
-  Object right = pop(state);
-  Object left = pop(state);
+void do_add_int(Frame *frame) {
+  Object right = pop(frame);
+  Object left = pop(frame);
   // Assume int
   Object result = int_add(left, right);
-  push(state, result);
+  push(frame, result);
 }
 
 void eval_code_quickening(Code *code, Object *args, int nargs) {
-  State state;
-  init_state(&state, code);
+  Frame frame;
+  init_frame(&frame, code);
   while (true) {
-    Opcode op = code->bytecode[state.pc];
-    byte arg = code->bytecode[state.pc + 1];
+    Opcode op = code->bytecode[frame.pc];
+    byte arg = code->bytecode[frame.pc + 1];
     switch (op) {
       case ARG:
         CHECK(arg < nargs && "out of bounds arg");
-        push(&state, args[arg]);
+        push(&frame, args[arg]);
         break;
       case ADD: {
-        if (peek(&state, 2).type == kInt) {
+        if (peek(&frame, 2).type == kInt) {
           // Rewrite to specialized handler
-          fprintf(stderr, "rewriting ADD to ADD_INT at %d\n", state.pc);
-          code->bytecode[state.pc] = ADD_INT;
-          do_add_int(&state);
+          fprintf(stderr, "rewriting ADD to ADD_INT at %d\n", frame.pc);
+          code->bytecode[frame.pc] = ADD_INT;
+          do_add_int(&frame);
           break;
         }
-        do_add_cached(&state);
+        do_add_cached(&frame);
         break;
       }
       case ADD_INT: {
-        if (peek(&state, 2).type != kInt) {
+        if (peek(&frame, 2).type != kInt) {
           // Rewrite to generic handler
-          code->bytecode[state.pc] = ADD;
-          do_add_cached(&state);
+          code->bytecode[frame.pc] = ADD;
+          do_add_cached(&frame);
           break;
         }
-        do_add_int(&state);
+        do_add_int(&frame);
         break;
       }
       case PRINT: {
-        Object obj = pop(&state);
+        Object obj = pop(&frame);
         Method method = lookup_method(obj.type, kPrint);
         (*method)(obj);
         break;
@@ -317,7 +317,7 @@ void eval_code_quickening(Code *code, Object *args, int nargs) {
         fprintf(stderr, "unknown opcode %d\n", op);
         abort();
     }
-    state.pc += kBytecodeSize;
+    frame.pc += kBytecodeSize;
   }
 }
 
