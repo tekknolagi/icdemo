@@ -234,14 +234,6 @@ void do_add_cached(State *state) {
   push(state, result);
 }
 
-void do_add_int(State *state) {
-  Object right = pop(state);
-  Object left = pop(state);
-  // Assume int
-  Object result = int_add(left, right);
-  push(state, result);
-}
-
 void eval_code_cached(Code *code, Object *args, int nargs) {
   State state;
   init_state(&state, code);
@@ -271,6 +263,14 @@ void eval_code_cached(Code *code, Object *args, int nargs) {
     }
     state.pc += kBytecodeSize;
   }
+}
+
+void do_add_int(State *state) {
+  Object right = pop(state);
+  Object left = pop(state);
+  // Assume int
+  Object result = int_add(left, right);
+  push(state, result);
 }
 
 void eval_code_quickening(Code *code, Object *args, int nargs) {
