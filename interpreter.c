@@ -132,6 +132,10 @@ typedef enum {
   ADD_INT,
   // Pop the top of the stack and print it.
   PRINT,
+  // Compute stack[-2] < stack[-1]. Push 1 if true, 0 if false.
+  LESS_THAN,
+  // Pop the top of the stack. Set the PC to `arg' if true (nonzero).
+  POP_JUMP_IF_TRUE,
   // Halt the machine.
   HALT,
 } Opcode;
