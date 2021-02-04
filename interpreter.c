@@ -29,12 +29,16 @@ Object new_str(const char *value) {
   return (Object){.type = kStr, .str_value = value};
 }
 
+#if defined(NDEBUG)
+#define CHECK
+#else
 #define CHECK(cond) \
   do {              \
     if (!(cond)) {  \
       abort();      \
     }               \
   } while (0)
+#endif
 
 Object int_add(Object left, Object right) {
   CHECK(left.type == kInt);
