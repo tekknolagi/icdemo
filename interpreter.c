@@ -52,6 +52,12 @@ Object int_print(Object obj) {
   return obj;
 }
 
+Object int_less_than(Object left, Object right) {
+  CHECK(left.type == kInt);
+  CHECK(right.type == kInt);
+  return new_int(left.int_value < right.int_value);
+}
+
 Object str_add(Object left, Object right) {
   CHECK(left.type == kStr);
   CHECK(right.type == kStr);
@@ -71,6 +77,7 @@ Object str_print(Object obj) {
 typedef enum {
   kAdd,
   kPrint,
+  kLessThan,
 
   kUnknownSymbol,
 } Symbol;
@@ -88,6 +95,7 @@ typedef struct {
 static const MethodDefinition kIntMethods[] = {
     {kAdd, int_add},
     {kPrint, int_print},
+    {kLessThan, int_less_than},
     {kUnknownSymbol, NULL},
 };
 
@@ -180,6 +188,14 @@ void init_frame(Frame *frame, Code *code) {
   frame->code = code;
 }
 
+void do_less_than(Frame *frame) {
+  Object right = pop(frame);
+  Object left = pop(frame);
+  Method method = lookup_method(left.type, kLessThan);
+  Object result = (*method)(left, right);
+  push(frame, result);
+}
+
 void eval_code_uncached(Code *code, Object *args, int nargs) {
   Frame frame;
   init_frame(&frame, code);
@@ -205,6 +221,9 @@ void eval_code_uncached(Code *code, Object *args, int nargs) {
         (*method)(obj);
         break;
       }
+      case LESS_THAN:
+        do_less_than(&frame);
+        break;
       case HALT:
         return;
       default:
@@ -264,6 +283,9 @@ void eval_code_cached(Code *code, Object *args, int nargs) {
         (*method)(obj);
         break;
       }
+      case LESS_THAN:
+        do_less_than(&frame);
+        break;
       case HALT:
         return;
       default:
@@ -333,6 +355,9 @@ void eval_code_quickening(Code *code, Object *args, int nargs) {
         (*method)(obj);
         break;
       }
+      case LESS_THAN:
+        do_less_than(&frame);
+        break;
       case HALT:
         return;
       default:
@@ -369,14 +394,17 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Usage: ./interpreter [uncached|cached|quickening]\n");
     return EXIT_FAILURE;
   }
-  byte bytecode[] = {/*0:*/ ARG,   0,
-                     /*2:*/ ARG,   1,
-                     /*4:*/ ADD,   0,
-                     /*6:*/ PRINT, 0,
-                     /*8:*/ HALT,  0};
+  byte bytecode[] = {/*0:*/ ARG,   2,
+                     /*2:*/ ARG,   0,
+                     /*4:*/ ARG,   1,
+                     /*6:*/ ADD,   0,
+                     /*8:*/ LESS_THAN, 0,
+                     /*10:*/ PRINT, 0,
+                     /*12:*/ HALT,  0};
   Object int_args[] = {
       new_int(5),
       new_int(10),
+      new_int(20),
   };
   Object str_args[] = {
       new_str("hello "),
@@ -385,6 +413,6 @@ int main(int argc, char **argv) {
   Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize);
   eval(&code, int_args, ARRAYSIZE(int_args));
   eval(&code, int_args, ARRAYSIZE(int_args));
-  eval(&code, str_args, ARRAYSIZE(str_args));
-  eval(&code, str_args, ARRAYSIZE(str_args));
+  // eval(&code, str_args, ARRAYSIZE(str_args));
+  // eval(&code, str_args, ARRAYSIZE(str_args));
 }
