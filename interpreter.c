@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,8 @@
 // TODO(max): Consider writing this in Rust or Nim for some extra reader
 // appeal.
 
+typedef intptr_t word;
+
 typedef enum {
   kInt,
   kStr,
@@ -28,7 +31,7 @@ typedef struct {
   ObjectType type;
   union {
     const char* str_value;
-    int int_value;
+    word int_value;
   };
 } Object;
 
@@ -38,7 +41,7 @@ bool object_is_int(Object* obj) { return obj->type == kInt; }
 
 bool object_is_str(Object* obj) { return obj->type == kStr; }
 
-int object_as_int(Object* obj) {
+word object_as_int(Object* obj) {
   CHECK(object_is_int(obj));
   return obj->int_value;
 }
@@ -48,7 +51,7 @@ const char* object_as_str(Object* obj) {
   return obj->str_value;
 }
 
-Object* new_int(int value) {
+Object* new_int(word value) {
   Object* result = malloc(sizeof *result);
   CHECK(result != NULL && "could not allocate object");
   *result = (Object){.type = kInt, .int_value = value};
@@ -77,7 +80,7 @@ Object* int_print(Object* obj) {
 Object* str_add(Object* left, Object* right) {
   CHECK(object_is_str(left));
   CHECK(object_is_str(right));
-  int result_size =
+  word result_size =
       strlen(object_as_str(left)) + strlen(object_as_str(right)) + 1;
   char* result = malloc(result_size);
   strcpy(result, object_as_str(left));
@@ -139,7 +142,7 @@ typedef struct {
 typedef struct {
   // Array of `num_opcodes' (op, arg) pairs (total size `num_opcodes' * 2).
   byte* bytecode;
-  int num_opcodes;
+  word num_opcodes;
   // Array of `num_opcodes' elements.
   CachedValue* caches;
 } Code;
@@ -164,7 +167,7 @@ typedef enum {
 Method lookup_method(ObjectType type, Symbol name) {
   CHECK(type < ARRAYSIZE(kTypes) && "out of bounds type");
   const MethodDefinition* table = kTypes[type];
-  for (int i = 0; table[i].method != NULL; i++) {
+  for (word i = 0; table[i].method != NULL; i++) {
     if (table[i].name == name) {
       return table[i].method;
     }
@@ -180,7 +183,7 @@ typedef struct {
   Object* stack_array[STACK_SIZE];
   Object** stack;
   Code* code;
-  int pc;
+  word pc;
 } Frame;
 
 static FORCE_INLINE void push(Frame* frame, Object* value) {
@@ -199,7 +202,7 @@ void init_frame(Frame* frame, Code* code) {
   frame->code = code;
 }
 
-void eval_code_uncached(Code* code, Object** args, int nargs) {
+void eval_code_uncached(Code* code, Object** args, word nargs) {
   Frame frame;
   init_frame(&frame, code);
   while (true) {
@@ -252,7 +255,7 @@ void add_update_cache(Frame* frame, Object* left, Object* right) {
   push(frame, result);
 }
 
-void eval_code_cached(Code* code, Object** args, int nargs) {
+void eval_code_cached(Code* code, Object** args, word nargs) {
   Frame frame;
   init_frame(&frame, code);
   while (true) {
@@ -298,7 +301,7 @@ void do_add_int(Frame* frame, Object* left, Object* right) {
   push(frame, result);
 }
 
-void eval_code_quickening(Code* code, Object** args, int nargs) {
+void eval_code_quickening(Code* code, Object** args, word nargs) {
   Frame frame;
   init_frame(&frame, code);
   while (true) {
@@ -362,7 +365,7 @@ void eval_code_quickening(Code* code, Object** args, int nargs) {
   }
 }
 
-Code new_code(byte* bytecode, int num_opcodes) {
+Code new_code(byte* bytecode, word num_opcodes) {
   Code result;
   result.bytecode = bytecode;
   result.num_opcodes = num_opcodes;
