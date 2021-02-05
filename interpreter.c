@@ -21,48 +21,90 @@
 // appeal.
 
 typedef intptr_t word;
+typedef uintptr_t uword;
 
 typedef enum {
   kInt,
   kStr,
 } ObjectType;
 
+struct Object;
+typedef struct Object Object;
+
 typedef struct {
   ObjectType type;
   union {
     const char* str_value;
-    word int_value;
   };
-} Object;
+} HeapObject;
 
-ObjectType object_type(Object* obj) { return obj->type; }
+enum {
+  kBitsPerByte = 8,                         // bits
+  kWordSize = sizeof(word),                 // bytes
+  kBitsPerWord = kWordSize * kBitsPerByte,  // bits
 
-bool object_is_int(Object* obj) { return obj->type == kInt; }
+  kIntegerTag = 0x0,      // 0b00
+  kIntegerTagMask = 0x3,  // 0b11
+  kIntegerShift = 2,
+  kIntegerBits = kBitsPerWord - kIntegerShift,
 
-bool object_is_str(Object* obj) { return obj->type == kStr; }
+  kHeapObjectTag = 0x1,      // 0b01
+  kHeapObjectTagMask = 0x1,  // 0b01
+};
+
+// These are defined as macros because they will not work as static const int
+// constants (per above explanation), and enum constants are only required to
+// be an int wide (per ISO C).
+#define INTEGER_MAX ((1LL << (kIntegerBits - 1)) - 1)
+#define INTEGER_MIN (-(1LL << (kIntegerBits - 1)))
+
+bool object_is_int(Object* obj) {
+  return ((uword)obj & kIntegerTagMask) == kIntegerTag;
+}
+
+bool object_is_heap_object(Object* obj) {
+  return ((uword)obj & kHeapObjectTagMask) == kHeapObjectTag;
+}
+
+HeapObject* object_address(Object* obj) {
+  CHECK(object_is_heap_object(obj));
+  return (HeapObject*)((uword)obj & ~kHeapObjectTagMask);
+}
+
+Object* object_new_heap_object(HeapObject* obj) {
+  return (Object*)((uword)obj | kHeapObjectTagMask);
+}
+
+ObjectType object_type(Object* obj) {
+  if (object_is_int(obj)) {
+    return kInt;
+  }
+  return object_address(obj)->type;
+}
+
+bool object_is_str(Object* obj) { return object_type(obj) == kStr; }
 
 word object_as_int(Object* obj) {
   CHECK(object_is_int(obj));
-  return obj->int_value;
+  return (uword)obj >> kIntegerShift;
 }
 
 const char* object_as_str(Object* obj) {
   CHECK(object_is_str(obj));
-  return obj->str_value;
+  return object_address(obj)->str_value;
 }
 
 Object* new_int(word value) {
-  Object* result = malloc(sizeof *result);
-  CHECK(result != NULL && "could not allocate object");
-  *result = (Object){.type = kInt, .int_value = value};
-  return result;
+  CHECK(value < INTEGER_MAX && "too big");
+  CHECK(value > INTEGER_MIN && "too small");
+  return (Object*)(value << kIntegerShift);
 }
 
 Object* new_str(const char* value) {
-  Object* result = malloc(sizeof *result);
+  HeapObject* result = malloc(sizeof *result);
   CHECK(result != NULL && "could not allocate object");
-  *result = (Object){.type = kStr, .str_value = value};
-  return result;
+  *result = (HeapObject){.type = kStr, .str_value = value};
+  return object_new_heap_object(result);
 }
 
 Object* int_add(Object* left, Object* right) {
