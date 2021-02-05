@@ -38,6 +38,17 @@ typedef struct {
   };
 } HeapObject;
 
+// These constants are defined in a enum because the right hand side of a
+// statement like
+//     static const int kFoo = ...;
+// must be a so-called "Integer Constant Expression". Compilers are required to
+// support a certain set of these expressions, but are not required to support
+// arbitrary arithmetic with other integer constants. Compilers such as gcc
+// before gcc-8 just decided not to play this game, while gcc-8+ and Clang play
+// just fine.
+// Since this arithmetic with constant values works just fine for enums, make
+// all these constants enum values instead.
+// See https://twitter.com/tekknolagi/status/1328449329472835586 for more info.
 enum {
   kBitsPerByte = 8,                         // bits
   kWordSize = sizeof(word),                 // bytes
