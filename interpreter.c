@@ -54,9 +54,9 @@ enum {
   kWordSize = sizeof(word),                 // bytes
   kBitsPerWord = kWordSize * kBitsPerByte,  // bits
 
-  kIntegerTag = 0x0,      // 0b00
-  kIntegerTagMask = 0x3,  // 0b11
-  kIntegerShift = 2,
+  kIntegerTag = 0x0,      // 0b0
+  kIntegerTagMask = 0x1,  // 0b1
+  kIntegerShift = 1,
   kIntegerBits = kBitsPerWord - kIntegerShift,
 
   kHeapObjectTag = 0x1,      // 0b01
