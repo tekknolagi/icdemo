@@ -82,8 +82,8 @@ HeapObject* object_address(Object* obj) {
   return (HeapObject*)((uword)obj & ~kHeapObjectTagMask);
 }
 
-Object* object_new_heap_object(HeapObject* obj) {
-  return (Object*)((uword)obj | kHeapObjectTagMask);
+Object* object_from_address(HeapObject* obj) {
+  return (Object*)((uword)obj | kHeapObjectTag);
 }
 
 ObjectType object_type(Object* obj) {
@@ -115,7 +115,7 @@ Object* new_str(const char* value) {
   HeapObject* result = malloc(sizeof *result);
   CHECK(result != NULL && "could not allocate object");
   *result = (HeapObject){.type = kStr, .str_value = value};
-  return object_new_heap_object(result);
+  return object_from_address(result);
 }
 
 Object* int_add(Object* left, Object* right) {
