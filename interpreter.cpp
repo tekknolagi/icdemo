@@ -31,6 +31,10 @@ typedef enum {
   kStr,
 } ObjectType;
 
+// TODO(max): Port the small objects to interpreter.cpp, too. Or maybe just
+// ditch the C++ objects and limit the assembly interpreter generation to a
+// totally different file.
+
 class Object {
  public:
   ObjectType type;
