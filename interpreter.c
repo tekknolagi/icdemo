@@ -21,48 +21,101 @@
 // appeal.
 
 typedef intptr_t word;
+typedef uintptr_t uword;
 
 typedef enum {
   kInt,
   kStr,
 } ObjectType;
 
+struct Object;
+typedef struct Object Object;
+
 typedef struct {
   ObjectType type;
   union {
     const char* str_value;
-    word int_value;
   };
-} Object;
+} HeapObject;
 
-ObjectType object_type(Object* obj) { return obj->type; }
+// These constants are defined in a enum because the right hand side of a
+// statement like
+//     static const int kFoo = ...;
+// must be a so-called "Integer Constant Expression". Compilers are required to
+// support a certain set of these expressions, but are not required to support
+// arbitrary arithmetic with other integer constants. Compilers such as gcc
+// before gcc-8 just decided not to play this game, while gcc-8+ and Clang play
+// just fine.
+// Since this arithmetic with constant values works just fine for enums, make
+// all these constants enum values instead.
+// See https://twitter.com/tekknolagi/status/1328449329472835586 for more info.
+enum {
+  kBitsPerByte = 8,                         // bits
+  kWordSize = sizeof(word),                 // bytes
+  kBitsPerWord = kWordSize * kBitsPerByte,  // bits
 
-bool object_is_int(Object* obj) { return obj->type == kInt; }
+  kIntegerTag = 0x0,      // 0b0
+  kIntegerTagMask = 0x1,  // 0b1
+  kIntegerShift = 1,
+  kIntegerBits = kBitsPerWord - kIntegerShift,
 
-bool object_is_str(Object* obj) { return obj->type == kStr; }
+  kHeapObjectTag = 0x1,      // 0b01
+  kHeapObjectTagMask = 0x1,  // 0b01
+};
+
+// These are defined as macros because they will not work as static const int
+// constants (per above explanation), and enum constants are only required to
+// be an int wide (per ISO C).
+#define INTEGER_MAX ((1LL << (kIntegerBits - 1)) - 1)
+#define INTEGER_MIN (-(1LL << (kIntegerBits - 1)))
+
+bool object_is_int(Object* obj) {
+  return ((uword)obj & kIntegerTagMask) == kIntegerTag;
+}
+
+bool object_is_heap_object(Object* obj) {
+  return ((uword)obj & kHeapObjectTagMask) == kHeapObjectTag;
+}
+
+HeapObject* object_address(Object* obj) {
+  CHECK(object_is_heap_object(obj));
+  return (HeapObject*)((uword)obj & ~kHeapObjectTagMask);
+}
+
+Object* object_from_address(HeapObject* obj) {
+  return (Object*)((uword)obj | kHeapObjectTag);
+}
+
+ObjectType object_type(Object* obj) {
+  if (object_is_int(obj)) {
+    return kInt;
+  }
+  return object_address(obj)->type;
+}
+
+bool object_is_str(Object* obj) { return object_type(obj) == kStr; }
 
 word object_as_int(Object* obj) {
   CHECK(object_is_int(obj));
-  return obj->int_value;
+  return (uword)obj >> kIntegerShift;
 }
 
 const char* object_as_str(Object* obj) {
   CHECK(object_is_str(obj));
-  return obj->str_value;
+  return object_address(obj)->str_value;
 }
 
 Object* new_int(word value) {
-  Object* result = malloc(sizeof *result);
-  CHECK(result != NULL && "could not allocate object");
-  *result = (Object){.type = kInt, .int_value = value};
-  return result;
+  CHECK(value < INTEGER_MAX && "too big");
+  CHECK(value > INTEGER_MIN && "too small");
+  return (Object*)(value << kIntegerShift);
 }
 
 Object* new_str(const char* value) {
-  Object* result = malloc(sizeof *result);
+  HeapObject* result = malloc(sizeof *result);
   CHECK(result != NULL && "could not allocate object");
-  *result = (Object){.type = kStr, .str_value = value};
-  return result;
+  *result = (HeapObject){.type = kStr, .str_value = value};
+  return object_from_address(result);
 }
 
 Object* int_add(Object* left, Object* right) {
@@ -73,7 +126,7 @@ Object* int_add(Object* left, Object* right) {
 
 Object* int_print(Object* obj) {
   CHECK(object_is_int(obj));
-  fprintf(stderr, "int: %d\n", object_as_int(obj));
+  fprintf(stderr, "int: %ld\n", object_as_int(obj));
   return obj;
 }
 
@@ -249,7 +302,7 @@ static FORCE_INLINE void cache_at_put(Frame* frame, ObjectType key,
 
 void add_update_cache(Frame* frame, Object* left, Object* right) {
   Method method = lookup_method(object_type(left), kAdd);
-  fprintf(stderr, "updating cache at %d\n", frame->pc);
+  fprintf(stderr, "updating cache at %ld\n", frame->pc);
   cache_at_put(frame, object_type(left), method);
   Object* result = (*method)(left, right);
   push(frame, result);
@@ -275,7 +328,7 @@ void eval_code_cached(Code* code, Object** args, word nargs) {
           add_update_cache(&frame, left, right);
           break;
         }
-        fprintf(stderr, "using cached value at %d\n", frame.pc);
+        fprintf(stderr, "using cached value at %ld\n", frame.pc);
         Object* result = (*method)(left, right);
         push(&frame, result);
         break;
@@ -332,7 +385,7 @@ void eval_code_quickening(Code* code, Object** args, word nargs) {
           add_update_cache(&frame, left, right);
           break;
         }
-        fprintf(stderr, "using cached value at %d\n", frame.pc);
+        fprintf(stderr, "using cached value at %ld\n", frame.pc);
         Method method = cached.value;
         Object* result = (*method)(left, right);
         push(&frame, result);
