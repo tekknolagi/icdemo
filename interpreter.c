@@ -126,7 +126,7 @@ Object* int_add(Object* left, Object* right) {
 
 Object* int_print(Object* obj) {
   CHECK(object_is_int(obj));
-  fprintf(stderr, "int: %d\n", object_as_int(obj));
+  fprintf(stderr, "int: %ld\n", object_as_int(obj));
   return obj;
 }
 
@@ -302,7 +302,7 @@ static FORCE_INLINE void cache_at_put(Frame* frame, ObjectType key,
 
 void add_update_cache(Frame* frame, Object* left, Object* right) {
   Method method = lookup_method(object_type(left), kAdd);
-  fprintf(stderr, "updating cache at %d\n", frame->pc);
+  fprintf(stderr, "updating cache at %ld\n", frame->pc);
   cache_at_put(frame, object_type(left), method);
   Object* result = (*method)(left, right);
   push(frame, result);
@@ -328,7 +328,7 @@ void eval_code_cached(Code* code, Object** args, word nargs) {
           add_update_cache(&frame, left, right);
           break;
         }
-        fprintf(stderr, "using cached value at %d\n", frame.pc);
+        fprintf(stderr, "using cached value at %ld\n", frame.pc);
         Object* result = (*method)(left, right);
         push(&frame, result);
         break;
@@ -385,7 +385,7 @@ void eval_code_quickening(Code* code, Object** args, word nargs) {
           add_update_cache(&frame, left, right);
           break;
         }
-        fprintf(stderr, "using cached value at %d\n", frame.pc);
+        fprintf(stderr, "using cached value at %ld\n", frame.pc);
         Method method = cached.value;
         Object* result = (*method)(left, right);
         push(&frame, result);
