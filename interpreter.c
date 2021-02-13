@@ -97,7 +97,7 @@ bool object_is_str(Object* obj) { return object_type(obj) == kStr; }
 
 word object_as_int(Object* obj) {
   CHECK(object_is_int(obj));
-  return (uword)obj >> kIntegerShift;
+  return (word)obj >> kIntegerShift;
 }
 
 const char* object_as_str(Object* obj) {
@@ -108,7 +108,7 @@ const char* object_as_str(Object* obj) {
 Object* new_int(word value) {
   CHECK(value < INTEGER_MAX && "too big");
   CHECK(value > INTEGER_MIN && "too small");
-  return (Object*)(value << kIntegerShift);
+  return (Object*)((uword)value << kIntegerShift);
 }
 
 Object* new_str(const char* value) {
