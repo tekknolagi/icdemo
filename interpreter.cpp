@@ -26,44 +26,102 @@ using namespace asmjit;
 // TODO(max): Consider writing this in Rust or Nim for some extra reader
 // appeal.
 
+typedef intptr_t word;
+typedef uintptr_t uword;
+
 typedef enum {
   kInt,
   kStr,
 } ObjectType;
 
-// TODO(max): Port the small objects to interpreter.cpp, too. Or maybe just
-// ditch the C++ objects and limit the assembly interpreter generation to a
-// totally different file.
+struct Object;
+typedef struct Object Object;
 
-class Object {
- public:
+typedef struct {
   ObjectType type;
   union {
     const char* str_value;
-    int int_value;
   };
-  explicit Object(int value) : type(kInt), int_value(value) {}
-  explicit Object(const char* value) : type(kStr), str_value(value) {}
+} HeapObject;
+
+// These constants are defined in a enum because the right hand side of a
+// statement like
+//     static const int kFoo = ...;
+// must be a so-called "Integer Constant Expression". Compilers are required to
+// support a certain set of these expressions, but are not required to support
+// arbitrary arithmetic with other integer constants. Compilers such as gcc
+// before gcc-8 just decided not to play this game, while gcc-8+ and Clang play
+// just fine.
+// Since this arithmetic with constant values works just fine for enums, make
+// all these constants enum values instead.
+// See https://twitter.com/tekknolagi/status/1328449329472835586 for more info.
+enum {
+  kBitsPerByte = 8,                         // bits
+  kWordSize = sizeof(word),                 // bytes
+  kBitsPerWord = kWordSize * kBitsPerByte,  // bits
+
+  kIntegerTag = 0x0,      // 0b0
+  kIntegerTagMask = 0x1,  // 0b1
+  kIntegerShift = 1,
+  kIntegerBits = kBitsPerWord - kIntegerShift,
+
+  kHeapObjectTag = 0x1,      // 0b01
+  kHeapObjectTagMask = 0x1,  // 0b01
 };
 
-Object* new_int(int value) { return new Object(value); }
+// These are defined as macros because they will not work as static const int
+// constants (per above explanation), and enum constants are only required to
+// be an int wide (per ISO C).
+#define INTEGER_MAX ((1LL << (kIntegerBits - 1)) - 1)
+#define INTEGER_MIN (-(1LL << (kIntegerBits - 1)))
 
-Object* new_str(const char* value) { return new Object(value); }
+bool object_is_int(Object* obj) {
+  return ((uword)obj & kIntegerTagMask) == kIntegerTag;
+}
 
-ObjectType object_type(Object* obj) { return obj->type; }
+bool object_is_heap_object(Object* obj) {
+  return ((uword)obj & kHeapObjectTagMask) == kHeapObjectTag;
+}
 
-bool object_is_int(Object* obj) { return obj->type == kInt; }
+HeapObject* object_address(Object* obj) {
+  CHECK(object_is_heap_object(obj));
+  return (HeapObject*)((uword)obj & ~kHeapObjectTagMask);
+}
 
-bool object_is_str(Object* obj) { return obj->type == kStr; }
+Object* object_from_address(HeapObject* obj) {
+  return (Object*)((uword)obj | kHeapObjectTag);
+}
 
-int object_as_int(Object* obj) {
+ObjectType object_type(Object* obj) {
+  if (object_is_int(obj)) {
+    return kInt;
+  }
+  return object_address(obj)->type;
+}
+
+bool object_is_str(Object* obj) { return object_type(obj) == kStr; }
+
+word object_as_int(Object* obj) {
   CHECK(object_is_int(obj));
-  return obj->int_value;
+  return (word)obj >> kIntegerShift;
 }
 
 const char* object_as_str(Object* obj) {
   CHECK(object_is_str(obj));
-  return obj->str_value;
+  return object_address(obj)->str_value;
+}
+
+Object* new_int(word value) {
+  CHECK(value < INTEGER_MAX && "too big");
+  CHECK(value > INTEGER_MIN && "too small");
+  return (Object*)((uword)value << kIntegerShift);
+}
+
+Object* new_str(const char* value) {
+  HeapObject* result = reinterpret_cast<HeapObject*>(malloc(sizeof *result));
+  CHECK(result != NULL && "could not allocate object");
+  *result = (HeapObject){.type = kStr, .str_value = value};
+  return object_from_address(result);
 }
 
 Object* int_add(Object* left, Object* right) {
