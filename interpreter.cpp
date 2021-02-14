@@ -81,10 +81,6 @@ typedef enum {
   ADD_INT,
   // Pop the top of the stack and print it.
   PRINT,
-  // Compute stack[-2] < stack[-1]. Push 1 if true, 0 if false.
-  LESS_THAN,
-  // Pop the top of the stack. Set the PC to `arg' if true (nonzero).
-  POP_JUMP_IF_TRUE,
   // Halt the machine.
   HALT,
 
@@ -131,14 +127,6 @@ void init_frame(Frame* frame, Code* code, Object** args) {
   frame->stack = frame->stack_array;
   frame->code = code;
   frame->args = args;
-}
-
-void do_less_than(Frame* frame) {
-  Object* right = pop(frame);
-  Object* left = pop(frame);
-  Method2 method = (Method2)lookup_method(object_type(left), kLessThan);
-  Object* result = (*method)(left, right);
-  push(frame, result);
 }
 
 static FORCE_INLINE CachedValue cache_at(Frame* frame) {
@@ -218,9 +206,6 @@ void eval_code_quickening(Code* code, Object** args, int nargs) {
         (*method)(obj);
         break;
       }
-      case LESS_THAN:
-        do_less_than(&frame);
-        break;
       case HALT:
         return;
       default:
