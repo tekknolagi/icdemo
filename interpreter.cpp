@@ -3,8 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <xbyak/xbyak.h>
+
 #include "objects.h"
 
 #define __ as->
@@ -217,23 +217,24 @@ void eval_code_quickening(Code* code, Object** args, int nargs) {
 
 using Register = Xbyak::Reg64;
 using Label = Xbyak::Label;
-using Xbyak::util::rax;
-using Xbyak::util::rcx;
-using Xbyak::util::rdx;
 using Xbyak::util::bl;
-using Xbyak::util::rsi;
-using Xbyak::util::rdi;
 using Xbyak::util::r8;
 using Xbyak::util::r9;
+using Xbyak::util::rax;
+using Xbyak::util::rcx;
+using Xbyak::util::cl;
+using Xbyak::util::rdi;
+using Xbyak::util::rdx;
+using Xbyak::util::rsi;
 
 static const Register kBCReg = rax;
-static const Register kFrameReg = rcx;
+static const Register kFrameReg = rdi;
 static const Register kPCReg = rdx;
 static const Xbyak::Reg8 kOpcodeReg = bl;
-static const Register kOpargReg = rsi;
+static const Xbyak::Reg8 kOpargReg = cl;
+static const Register kOpargRegBig = rcx;
 // Entrypoint receives arguments according to SystemV 64-bit ABI
-static const Register kArgRegs[] = {rdi, rsi, rdx,
-                                    rcx, r8,  r9};
+static const Register kArgRegs[] = {rdi, rsi, rdx, rcx, r8, r9};
 
 void emit_next_opcode(Xbyak::CodeGenerator* as, Label* dispatch) {
   __ add(kPCReg, kBytecodeSize);
@@ -242,22 +243,20 @@ void emit_next_opcode(Xbyak::CodeGenerator* as, Label* dispatch) {
 
 void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
   using namespace Xbyak::util;
-  __ int3();
+  //__ int3();
   // Load the frame from the first arg
   __ mov(kFrameReg, kArgRegs[0]);
   // Load the bytecode pointer into a register
-  __ mov(kBCReg, qword [kFrameReg + offsetof(Frame, code)]);
-  __ mov(kBCReg, qword [kBCReg + offsetof(Code, bytecode)]);
+  __ mov(kBCReg, qword[kFrameReg + offsetof(Frame, code)]);
+  __ mov(kBCReg, qword[kBCReg + offsetof(Code, bytecode)]);
   // Initialize PC
   __ xor_(kPCReg, kPCReg);
 
   // while (true) {
   Label dispatch;
   __ L(dispatch);
-  __ mov(kOpcodeReg, Xbyak::util::byte [kBCReg + kPCReg]);
-  __ mov(kOpargReg, Xbyak::util::byte [kBCReg + kPCReg + 1]);
-  // TODO(max): Get rid of this and instruction
-  __ and_(kOpargReg, 0xf);
+  __ mov(kOpcodeReg, Xbyak::util::byte[kBCReg + kPCReg]);
+  __ mov(kOpargReg, Xbyak::util::byte[kBCReg + kPCReg + 1]);
 
   // TODO(max): Make dispatch via a jump table instead of a series of
   // comparisons. With xbyak use putlabel/putL?
@@ -289,9 +288,9 @@ void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
   {
     Register r_scratch = r8;
     // Object** args = frame->args
-    __ mov(r_scratch, qword [kFrameReg + offsetof(Frame, args)]);
+    __ mov(r_scratch, qword[kFrameReg + offsetof(Frame, args)]);
     // push(args[arg])
-    __ push(qword [r_scratch + kOpargReg]);
+    __ push(qword[r_scratch + kOpargRegBig]);
     emit_next_opcode(as, &dispatch);
   }
 
@@ -368,19 +367,13 @@ int main(int argc, char** argv) {
   //     new_str("world"),
   // };
   byte bytecode[] = {
-      ARG,
-      0,
-      ARG,
-      1,
-      ADD_INT,
-      0,
-      HALT,
-      0,
+      ARG, 0, ARG, 1, ADD_INT, 0, HALT, 0,
   };
   Object* int_args[] = {
       new_int(42),
       new_int(20),
   };
+  fprintf(stderr, "args %p, %p\n", int_args[0], int_args[1]);
   Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize);
   eval(&code, int_args);
   // eval(&code, int_args);
