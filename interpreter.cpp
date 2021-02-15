@@ -4,10 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "asmjit/x86.h"
+#include <xbyak/xbyak.h>
 #include "objects.h"
-
-using namespace asmjit;
 
 #define __ as->
 
@@ -217,68 +215,91 @@ void eval_code_quickening(Code* code, Object** args, int nargs) {
   }
 }
 
-using Register = x86::Gp;
+using Register = Xbyak::Reg64;
+using Label = Xbyak::Label;
+using Xbyak::util::rax;
+using Xbyak::util::rcx;
+using Xbyak::util::rdx;
+using Xbyak::util::bl;
+using Xbyak::util::rsi;
+using Xbyak::util::rdi;
+using Xbyak::util::r8;
+using Xbyak::util::r9;
 
-static const Register kBCReg = x86::rax;
-static const Register kFrameReg = x86::rcx;
-static const Register kPCReg = x86::rdx;
-static const Register kOpcodeReg = x86::rbx;
-static const Register kOpargReg = x86::rsi;
+static const Register kBCReg = rax;
+static const Register kFrameReg = rcx;
+static const Register kPCReg = rdx;
+static const Xbyak::Reg8 kOpcodeReg = bl;
+static const Register kOpargReg = rsi;
 // Entrypoint receives arguments according to SystemV 64-bit ABI
-static const Register kArgRegs[] = {x86::rdi, x86::rsi, x86::rdx,
-                                    x86::rcx, x86::r8,  x86::r9};
+static const Register kArgRegs[] = {rdi, rsi, rdx,
+                                    rcx, r8,  r9};
 
-void emit_next_opcode(x86::Assembler* as, Label* dispatch) {
+void emit_next_opcode(Xbyak::CodeGenerator* as, Label* dispatch) {
   __ add(kPCReg, kBytecodeSize);
   __ jmp(*dispatch);
 }
 
-void emit_assembly_interpreter(x86::Assembler* as) {
+void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
+  using namespace Xbyak::util;
   __ int3();
   // Load the frame from the first arg
   __ mov(kFrameReg, kArgRegs[0]);
   // Load the bytecode pointer into a register
-  __ mov(kBCReg, qword_ptr(kFrameReg, offsetof(Frame, code)));
-  __ mov(kBCReg, qword_ptr(kBCReg, offsetof(Code, bytecode)));
+  __ mov(kBCReg, qword [kFrameReg + offsetof(Frame, code)]);
+  __ mov(kBCReg, qword [kBCReg + offsetof(Code, bytecode)]);
   // Initialize PC
   __ xor_(kPCReg, kPCReg);
 
   // while (true) {
-  Label dispatch = __ newLabel();
-  __ bind(dispatch);
-  __ mov(kOpcodeReg, byte_ptr(kBCReg, kPCReg));
-  __ mov(kOpargReg, ptr(kBCReg, kPCReg, 1));
+  Label dispatch;
+  __ L(dispatch);
+  __ mov(kOpcodeReg, Xbyak::util::byte [kBCReg + kPCReg]);
+  __ mov(kOpargReg, Xbyak::util::byte [kBCReg + kPCReg + 1]);
   // TODO(max): Get rid of this and instruction
-  __ and_(kOpargReg, Imm(0xf));
+  __ and_(kOpargReg, 0xf);
 
   // TODO(max): Make dispatch via a jump table instead of a series of
-  // comparisons
+  // comparisons. With xbyak use putlabel/putL?
+  /*
+         Label labelTbl, L0, L1, L2;
+         mov(rax, labelTbl);
+         // rdx is an index of jump table
+         jmp(ptr [rax + rdx * sizeof(void*)]);
+      L(labelTbl);
+         putL(L0);
+         putL(L1);
+         putL(L2);
+      L(L0);
+         ....
+      L(L1);
+         ....
+  */
   Label handlers[NUM_OPCODES];
   for (int i = 0; i < NUM_OPCODES; i++) {
-    handlers[i] = __ newLabel();
-    __ cmp(kOpcodeReg, Imm(i));
+    __ cmp(kOpcodeReg, i);
     __ je(handlers[i]);
   }
   // Fall-through for invalid opcodes, I guess
   __ int3();
-  __ mov(x86::rax, Imm(-1));
+  __ mov(rax, -1);
   __ ret();
 
-  __ bind(handlers[ARG]);
+  __ L(handlers[ARG]);
   {
-    Register r_scratch = x86::r8;
+    Register r_scratch = r8;
     // Object** args = frame->args
-    __ mov(r_scratch, qword_ptr(kFrameReg, offsetof(Frame, args)));
+    __ mov(r_scratch, qword [kFrameReg + offsetof(Frame, args)]);
     // push(args[arg])
-    __ push(qword_ptr(r_scratch, kOpargReg));
+    __ push(qword [r_scratch + kOpargReg]);
     emit_next_opcode(as, &dispatch);
   }
 
-  __ bind(handlers[ADD_INT]);
+  __ L(handlers[ADD_INT]);
   {
-    Register r_right = x86::r8;
-    Register r_left = x86::r9;
-    Label non_int = __ newLabel();
+    Register r_right = r8;
+    Register r_left = r9;
+    Label non_int;
     __ pop(r_right);
     __ pop(r_left);
     // Check both are ints
@@ -291,15 +312,15 @@ void emit_assembly_interpreter(x86::Assembler* as) {
     __ push(r_left);
     emit_next_opcode(as, &dispatch);
 
-    __ bind(non_int);
+    __ L(non_int);
     __ int3();
-    __ mov(x86::rax, Imm(-1));
+    __ mov(rax, -1);
     __ ret();
   }
 
-  __ bind(handlers[HALT]);
+  __ L(handlers[HALT]);
   {
-    __ pop(x86::rax);
+    __ pop(rax);
     __ ret();
   }
 }
@@ -307,44 +328,17 @@ void emit_assembly_interpreter(x86::Assembler* as) {
 // Signature of the generated function.
 typedef Object* (*Func)(Frame* frame);
 
-// A simple error handler implementation, extend according to your needs.
-class MyErrorHandler : public ErrorHandler {
- public:
-  void handleError(Error err, const char* message,
-                   BaseEmitter* origin) override {
-    fprintf(stderr, "AsmJit error: %s\n", message);
-    abort();
-  }
-};
-
 void eval_code_assembly(Code* code, Object** args) {
   Frame frame;
   init_frame(&frame, code, args);
-  JitRuntime rt;           // Runtime specialized for JIT code execution.
-  CodeHolder code_holder;  // Holds code and relocation information.
-  code_holder.init(
-      rt.environment());  // Initialize code to match the JIT environment.
-  MyErrorHandler myErrorHandler;
-  code_holder.setErrorHandler(&myErrorHandler);
-  x86::Assembler as(
-      &code_holder);  // Create and attach x86::Assembler to code.
-  as.addValidationOptions(BaseEmitter::kValidationOptionAssembler);
+  Xbyak::CodeGenerator as;
   emit_assembly_interpreter(&as);
-
-  Func fn;  // Holds address to the generated function.
-  Error err =
-      rt.add(&fn, &code_holder);  // Add the generated code to the runtime.
-  if (err) {
-    fprintf(stderr, "error from asmjit\n");
-    abort();
-  }
+  Func fn = as.getCode<Func>();
   Object* result = fn(&frame);
   if (object_type(result) != kInt) {
     fprintf(stderr, "error: expected int\n");
   }
   fprintf(stderr, "result: %d\n", object_as_int(result));
-
-  rt.release(fn);
 }
 
 Code new_code(byte* bytecode, int num_opcodes) {
