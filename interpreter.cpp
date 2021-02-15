@@ -124,7 +124,8 @@ static FORCE_INLINE Object* pop(Frame* frame) {
 
 void init_frame(Frame* frame, Code* code, Object** args) {
   frame->pc = 0;
-  frame->stack = frame->stack_array;
+  // stack grows down
+  frame->stack = frame->stack_array + STACK_SIZE;
   frame->code = code;
   frame->args = args;
 }
@@ -221,7 +222,7 @@ using Register = x86::Gp;
 static const Register kBCReg = x86::rax;
 static const Register kFrameReg = x86::rcx;
 static const Register kPCReg = x86::rdx;
-static const Register kOpcodeReg = x86::bx;
+static const Register kOpcodeReg = x86::rbx;
 static const Register kOpargReg = x86::rsi;
 // Entrypoint receives arguments according to SystemV 64-bit ABI
 static const Register kArgRegs[] = {x86::rdi, x86::rsi, x86::rdx,
@@ -233,6 +234,7 @@ void emit_next_opcode(x86::Assembler* as, Label* dispatch) {
 }
 
 void emit_assembly_interpreter(x86::Assembler* as) {
+  __ int3();
   // Load the frame from the first arg
   __ mov(kFrameReg, kArgRegs[0]);
   // Load the bytecode pointer into a register
@@ -244,7 +246,7 @@ void emit_assembly_interpreter(x86::Assembler* as) {
   // while (true) {
   Label dispatch = __ newLabel();
   __ bind(dispatch);
-  __ mov(kOpcodeReg, ptr(kBCReg, kPCReg));
+  __ mov(kOpcodeReg, byte_ptr(kBCReg, kPCReg));
   __ mov(kOpargReg, ptr(kBCReg, kPCReg, 1));
   // TODO(max): Get rid of this and instruction
   __ and_(kOpargReg, Imm(0xf));
@@ -259,7 +261,7 @@ void emit_assembly_interpreter(x86::Assembler* as) {
   }
   // Fall-through for invalid opcodes, I guess
   __ int3();
-  __ push(Imm(-1));
+  __ mov(x86::rax, Imm(-1));
   __ ret();
 
   __ bind(handlers[ARG]);
@@ -270,6 +272,29 @@ void emit_assembly_interpreter(x86::Assembler* as) {
     // push(args[arg])
     __ push(qword_ptr(r_scratch, kOpargReg));
     emit_next_opcode(as, &dispatch);
+  }
+
+  __ bind(handlers[ADD_INT]);
+  {
+    Register r_right = x86::r8;
+    Register r_left = x86::r9;
+    Label non_int = __ newLabel();
+    __ pop(r_right);
+    __ pop(r_left);
+    // Check both are ints
+    static_assert(kIntegerTag == 0 && kIntegerShift == 1, "");
+    __ test(r_left, kIntegerTagMask);
+    __ jnz(non_int);
+    __ test(r_right, kIntegerTagMask);
+    __ jnz(non_int);
+    __ add(r_left, r_right);
+    __ push(r_left);
+    emit_next_opcode(as, &dispatch);
+
+    __ bind(non_int);
+    __ int3();
+    __ mov(x86::rax, Imm(-1));
+    __ ret();
   }
 
   __ bind(handlers[HALT]);
@@ -351,11 +376,16 @@ int main(int argc, char** argv) {
   byte bytecode[] = {
       ARG,
       0,
+      ARG,
+      1,
+      ADD_INT,
+      0,
       HALT,
       0,
   };
   Object* int_args[] = {
       new_int(42),
+      new_int(20),
   };
   Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize);
   eval(&code, int_args);

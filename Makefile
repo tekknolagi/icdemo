@@ -10,7 +10,7 @@ asm-interpreter: interpreter.cpp
 	#   cd asmjit/build
 	#   cmake -GNinja ..
 	#   ninja
-	$(CXX) $(CXXFLAGS) interpreter.cpp -I asmjit/src/ -L asmjit/build/ $(LDFLAGS) -o asm-interpreter -lasmjit
+	$(CXX) -g $(CXXFLAGS) interpreter.cpp -I asmjit/src/ -L asmjit/build/ $(LDFLAGS) -o asm-interpreter -lasmjit
 	# Now run with:
 	#   LD_LIBRARY_PATH=asmjit/build ./asm-interpreter
 
