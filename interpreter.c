@@ -237,7 +237,11 @@ typedef struct {
   Object** stack;
   Code* code;
   word pc;
+  Object** args;
+  word nargs;
 } Frame;
+
+typedef void (*EvalFunc)(Frame* frame);
 
 static FORCE_INLINE void push(Frame* frame, Object* value) {
   CHECK(frame->stack >= frame->stack_array && "stack overflow");
@@ -250,34 +254,35 @@ static FORCE_INLINE Object* pop(Frame* frame) {
   return *++frame->stack;
 }
 
-void init_frame(Frame* frame, Code* code) {
+void init_frame(Frame* frame, Code* code, Object** args, word nargs) {
   frame->pc = 0;
   // last valid slot in the stack
   frame->stack = frame->stack_array + STACK_SIZE - 1;
   frame->code = code;
+  frame->args = args;
+  frame->nargs = nargs;
 }
 
-void eval_code_uncached(Code* code, Object** args, word nargs) {
-  Frame frame;
-  init_frame(&frame, code);
+void eval_code_uncached(Frame* frame) {
+  Code* code = frame->code;
   while (true) {
-    Opcode op = code->bytecode[frame.pc];
-    byte arg = code->bytecode[frame.pc + 1];
+    Opcode op = code->bytecode[frame->pc];
+    byte arg = code->bytecode[frame->pc + 1];
     switch (op) {
       case ARG:
-        CHECK(arg < nargs && "out of bounds arg");
-        push(&frame, args[arg]);
+        CHECK(arg < frame->nargs && "out of bounds arg");
+        push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = pop(&frame);
-        Object* left = pop(&frame);
+        Object* right = pop(frame);
+        Object* left = pop(frame);
         Method method = lookup_method(object_type(left), kAdd);
         Object* result = (*method)(left, right);
-        push(&frame, result);
+        push(frame, result);
         break;
       }
       case PRINT: {
-        Object* obj = pop(&frame);
+        Object* obj = pop(frame);
         Method method = lookup_method(object_type(obj), kPrint);
         (*method)(obj);
         break;
@@ -288,7 +293,7 @@ void eval_code_uncached(Code* code, Object** args, word nargs) {
         fprintf(stderr, "unknown opcode %d\n", op);
         abort();
     }
-    frame.pc += kBytecodeSize;
+    frame->pc += kBytecodeSize;
   }
 }
 
@@ -310,33 +315,32 @@ void add_update_cache(Frame* frame, Object* left, Object* right) {
   push(frame, result);
 }
 
-void eval_code_cached(Code* code, Object** args, word nargs) {
-  Frame frame;
-  init_frame(&frame, code);
+void eval_code_cached(Frame* frame) {
+  Code* code = frame->code;
   while (true) {
-    Opcode op = code->bytecode[frame.pc];
-    byte arg = code->bytecode[frame.pc + 1];
+    Opcode op = code->bytecode[frame->pc];
+    byte arg = code->bytecode[frame->pc + 1];
     switch (op) {
       case ARG:
-        CHECK(arg < nargs && "out of bounds arg");
-        push(&frame, args[arg]);
+        CHECK(arg < frame->nargs && "out of bounds arg");
+        push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = pop(&frame);
-        Object* left = pop(&frame);
-        CachedValue cached = cache_at(&frame);
+        Object* right = pop(frame);
+        Object* left = pop(frame);
+        CachedValue cached = cache_at(frame);
         Method method = cached.value;
         if (method == NULL || cached.key != object_type(left)) {
-          add_update_cache(&frame, left, right);
+          add_update_cache(frame, left, right);
           break;
         }
-        fprintf(stderr, "using cached value at %ld\n", frame.pc);
+        fprintf(stderr, "using cached value at %ld\n", frame->pc);
         Object* result = (*method)(left, right);
-        push(&frame, result);
+        push(frame, result);
         break;
       }
       case PRINT: {
-        Object* obj = pop(&frame);
+        Object* obj = pop(frame);
         Method method = lookup_method(object_type(obj), kPrint);
         (*method)(obj);
         break;
@@ -347,7 +351,7 @@ void eval_code_cached(Code* code, Object** args, word nargs) {
         fprintf(stderr, "unknown opcode %d\n", op);
         abort();
     }
-    frame.pc += kBytecodeSize;
+    frame->pc += kBytecodeSize;
   }
 }
 
@@ -356,56 +360,55 @@ void do_add_int(Frame* frame, Object* left, Object* right) {
   push(frame, result);
 }
 
-void eval_code_quickening(Code* code, Object** args, word nargs) {
-  Frame frame;
-  init_frame(&frame, code);
+void eval_code_quickening(Frame* frame) {
+  Code* code = frame->code;
   while (true) {
-    Opcode op = code->bytecode[frame.pc];
-    byte arg = code->bytecode[frame.pc + 1];
+    Opcode op = code->bytecode[frame->pc];
+    byte arg = code->bytecode[frame->pc + 1];
     switch (op) {
       case ARG:
-        CHECK(arg < nargs && "out of bounds arg");
-        push(&frame, args[arg]);
+        CHECK(arg < frame->nargs && "out of bounds arg");
+        push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = pop(&frame);
-        Object* left = pop(&frame);
+        Object* right = pop(frame);
+        Object* left = pop(frame);
         if (object_type(left) == kInt) {
-          do_add_int(&frame, left, right);
-          code->bytecode[frame.pc] = ADD_INT;
+          do_add_int(frame, left, right);
+          code->bytecode[frame->pc] = ADD_INT;
           break;
         }
-        add_update_cache(&frame, left, right);
-        code->bytecode[frame.pc] = ADD_CACHED;
+        add_update_cache(frame, left, right);
+        code->bytecode[frame->pc] = ADD_CACHED;
         break;
       }
       case ADD_CACHED: {
-        Object* right = pop(&frame);
-        Object* left = pop(&frame);
-        CachedValue cached = cache_at(&frame);
+        Object* right = pop(frame);
+        Object* left = pop(frame);
+        CachedValue cached = cache_at(frame);
         if (cached.key != object_type(left)) {
-          add_update_cache(&frame, left, right);
+          add_update_cache(frame, left, right);
           break;
         }
-        fprintf(stderr, "using cached value at %ld\n", frame.pc);
+        fprintf(stderr, "using cached value at %ld\n", frame->pc);
         Method method = cached.value;
         Object* result = (*method)(left, right);
-        push(&frame, result);
+        push(frame, result);
         break;
       }
       case ADD_INT: {
-        Object* right = pop(&frame);
-        Object* left = pop(&frame);
+        Object* right = pop(frame);
+        Object* left = pop(frame);
         if (object_type(left) != kInt) {
-          add_update_cache(&frame, left, right);
-          code->bytecode[frame.pc] = ADD_CACHED;
+          add_update_cache(frame, left, right);
+          code->bytecode[frame->pc] = ADD_CACHED;
           break;
         }
-        do_add_int(&frame, left, right);
+        do_add_int(frame, left, right);
         break;
       }
       case PRINT: {
-        Object* obj = pop(&frame);
+        Object* obj = pop(frame);
         Method method = lookup_method(object_type(obj), kPrint);
         (*method)(obj);
         break;
@@ -416,7 +419,7 @@ void eval_code_quickening(Code* code, Object** args, word nargs) {
         fprintf(stderr, "unknown opcode %d\n", op);
         abort();
     }
-    frame.pc += kBytecodeSize;
+    frame->pc += kBytecodeSize;
   }
 }
 
@@ -429,7 +432,7 @@ Code new_code(byte* bytecode, word num_opcodes) {
 }
 
 int main(int argc, char** argv) {
-  void (*eval)() = eval_code_uncached;
+  EvalFunc eval = eval_code_uncached;
   if (argc == 2) {
     const char* mode = argv[1];
     if (strcmp(mode, "uncached") == 0) {
@@ -455,13 +458,18 @@ int main(int argc, char** argv) {
       new_int(5),
       new_int(10),
   };
+  Frame frame;
+  Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize);
+  init_frame(&frame, &code, int_args, ARRAYSIZE(int_args));
+  eval(&frame);
+  init_frame(&frame, &code, int_args, ARRAYSIZE(int_args));
+  eval(&frame);
   Object* str_args[] = {
       new_str("hello "),
       new_str("world"),
   };
-  Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize);
-  eval(&code, int_args, ARRAYSIZE(int_args));
-  eval(&code, int_args, ARRAYSIZE(int_args));
-  eval(&code, str_args, ARRAYSIZE(str_args));
-  eval(&code, str_args, ARRAYSIZE(str_args));
+  init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
+  eval(&frame);
+  init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
+  eval(&frame);
 }
