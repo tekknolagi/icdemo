@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ujit_asm.h"
+
 #define FORCE_INLINE __attribute__((always_inline)) inline
 
 #if defined(NDEBUG)
@@ -213,6 +215,8 @@ typedef enum {
   PRINT,
   // Halt the machine.
   HALT,
+
+  NUM_OPCODES,
 } Opcode;
 
 #define ARRAYSIZE(ARR) (sizeof(ARR) / sizeof(ARR)[0])
@@ -243,12 +247,12 @@ typedef struct {
 
 typedef void (*EvalFunc)(Frame* frame);
 
-static FORCE_INLINE void push(Frame* frame, Object* value) {
+static FORCE_INLINE void frame_push(Frame* frame, Object* value) {
   CHECK(frame->stack >= frame->stack_array && "stack overflow");
   *frame->stack-- = value;
 }
 
-static FORCE_INLINE Object* pop(Frame* frame) {
+static FORCE_INLINE Object* frame_pop(Frame* frame) {
   CHECK(frame->stack < frame->stack_array + STACK_SIZE - 1 &&
         "stack underflow");
   return *++frame->stack;
@@ -271,18 +275,18 @@ void eval_code_uncached(Frame* frame) {
     switch (op) {
       case ARG:
         CHECK(arg < frame->nargs && "out of bounds arg");
-        push(frame, frame->args[arg]);
+        frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         Method method = lookup_method(object_type(left), kAdd);
         Object* result = (*method)(left, right);
-        push(frame, result);
+        frame_push(frame, result);
         break;
       }
       case PRINT: {
-        Object* obj = pop(frame);
+        Object* obj = frame_pop(frame);
         Method method = lookup_method(object_type(obj), kPrint);
         (*method)(obj);
         break;
@@ -312,7 +316,7 @@ void add_update_cache(Frame* frame, Object* left, Object* right) {
   fprintf(stderr, "updating cache at %ld\n", frame->pc);
   cache_at_put(frame, object_type(left), method);
   Object* result = (*method)(left, right);
-  push(frame, result);
+  frame_push(frame, result);
 }
 
 void eval_code_cached(Frame* frame) {
@@ -323,11 +327,11 @@ void eval_code_cached(Frame* frame) {
     switch (op) {
       case ARG:
         CHECK(arg < frame->nargs && "out of bounds arg");
-        push(frame, frame->args[arg]);
+        frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         CachedValue cached = cache_at(frame);
         Method method = cached.value;
         if (method == NULL || cached.key != object_type(left)) {
@@ -336,11 +340,11 @@ void eval_code_cached(Frame* frame) {
         }
         fprintf(stderr, "using cached value at %ld\n", frame->pc);
         Object* result = (*method)(left, right);
-        push(frame, result);
+        frame_push(frame, result);
         break;
       }
       case PRINT: {
-        Object* obj = pop(frame);
+        Object* obj = frame_pop(frame);
         Method method = lookup_method(object_type(obj), kPrint);
         (*method)(obj);
         break;
@@ -357,7 +361,7 @@ void eval_code_cached(Frame* frame) {
 
 void do_add_int(Frame* frame, Object* left, Object* right) {
   Object* result = int_add(left, right);
-  push(frame, result);
+  frame_push(frame, result);
 }
 
 void eval_code_quickening(Frame* frame) {
@@ -368,11 +372,11 @@ void eval_code_quickening(Frame* frame) {
     switch (op) {
       case ARG:
         CHECK(arg < frame->nargs && "out of bounds arg");
-        push(frame, frame->args[arg]);
+        frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         if (object_type(left) == kInt) {
           do_add_int(frame, left, right);
           code->bytecode[frame->pc] = ADD_INT;
@@ -383,8 +387,8 @@ void eval_code_quickening(Frame* frame) {
         break;
       }
       case ADD_CACHED: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         CachedValue cached = cache_at(frame);
         if (cached.key != object_type(left)) {
           add_update_cache(frame, left, right);
@@ -393,12 +397,12 @@ void eval_code_quickening(Frame* frame) {
         fprintf(stderr, "using cached value at %ld\n", frame->pc);
         Method method = cached.value;
         Object* result = (*method)(left, right);
-        push(frame, result);
+        frame_push(frame, result);
         break;
       }
       case ADD_INT: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         if (object_type(left) != kInt) {
           add_update_cache(frame, left, right);
           code->bytecode[frame->pc] = ADD_CACHED;
@@ -408,7 +412,7 @@ void eval_code_quickening(Frame* frame) {
         break;
       }
       case PRINT: {
-        Object* obj = pop(frame);
+        Object* obj = frame_pop(frame);
         Method method = lookup_method(object_type(obj), kPrint);
         (*method)(obj);
         break;
@@ -431,7 +435,96 @@ Code new_code(byte* bytecode, word num_opcodes) {
   return result;
 }
 
-int main(int argc, char** argv) {
+typedef struct {
+  uint32_t idx;
+} Label;
+
+Label new_label(codeblock_t* cb, const char* name) {
+  return (Label){.idx = cb_new_label(cb, name)};
+}
+
+void bind(codeblock_t* cb, Label label) {
+  cb_label_ref(cb, label.idx);
+}
+
+#define L(name) do { \
+  Label name = new_label(cb, #name); \
+  cb_label_ref(cb, name.idx); \
+} while(0)
+
+//static const x86opnd_t kArgRegs[] = C_ARG_REGS;
+static const x86opnd_t kBCReg = RAX;
+static const x86opnd_t kFrameReg = RDI;
+static const x86opnd_t kPCReg = RDX;
+static const x86opnd_t kOpcodeReg = BL;
+static const x86opnd_t kOpargReg = CL;
+static const x86opnd_t kOpargRegBig = RCX;
+
+void emit_next_opcode(codeblock_t* cb, Label dispatch) {
+  add(cb, kPCReg, imm_opnd(kBytecodeSize));
+  jmp(cb, dispatch.idx);
+}
+
+static const int kByteSize = sizeof(byte) * kBitsPerByte;
+
+void emit_assembly_interpreter(codeblock_t* cb) {
+  // Load the frame from the first arg
+  mov(cb, kFrameReg, C_ARG_REGS[0]);
+  // Load the bytecode pointer into a register
+  mov(cb, kBCReg, member_opnd(kFrameReg, Frame, code));
+  mov(cb, kBCReg, member_opnd(kBCReg, Code, bytecode));
+  // Initialize PC
+  xor(cb, kPCReg, kPCReg);
+
+  // while (true) {
+  L(dispatch);
+  mov(cb, kOpcodeReg, mem_opnd_sib(kByteSize, kBCReg, kPCReg, /*scale=*/1, /*disp=*/0));
+  mov(cb, kOpargReg, mem_opnd_sib(kByteSize, kBCReg, kPCReg, /*scale=*/1, /*disp=*/1));
+
+  // TODO(max): Make dispatch via a jump table instead of a series of
+  // comparisons.
+  /*
+         Label labelTbl, L0, L1, L2;
+         mov(rax, labelTbl);
+         // rdx is an index of jump table
+         jmp(ptr [rax + rdx * sizeof(void*)]);
+      L(labelTbl);
+         putL(L0);
+         putL(L1);
+         putL(L2);
+      L(L0);
+         ....
+      L(L1);
+         ....
+  */
+  Label handlers[NUM_OPCODES];
+  for (word i = 0; i < NUM_OPCODES; i++) {
+    handlers[i] = new_label(cb, "unnamed");
+    cmp(cb, kOpcodeReg, imm_opnd(i));
+    je(cb, handlers[i].idx);
+  }
+
+  // TODO(max): Remove filler
+  mov(cb, RAX, imm_opnd(42));
+  ret(cb);
+}
+
+typedef Object* (*Func)(Frame* frame);
+
+static const int kKiB = 1000;
+static const int kMiB = 1000 * kKiB;
+static const int kGiB = 1000 * kMiB;
+
+Func gen_assembly_interpreter() {
+  codeblock_t cb;
+  word mem_size = 1 * kGiB;
+  byte* memory = alloc_exec_mem(mem_size);
+  cb_init(&cb, memory, mem_size);
+  emit_assembly_interpreter(&cb);
+  return (Func)memory;
+}
+
+int old_main(int argc, char** argv) {
   EvalFunc eval = eval_code_uncached;
   if (argc == 2) {
     const char* mode = argv[1];
@@ -472,4 +565,26 @@ int main(int argc, char** argv) {
   eval(&frame);
   init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
   eval(&frame);
+}
+
+int main(int argc, char** argv) {
+  Func eval = gen_assembly_interpreter();
+  byte bytecode[] = {
+      ARG, 0, ARG, 1, ADD_INT, 0, HALT, 0,
+  };
+  Object* int_args[] = {
+      new_int(5),
+      new_int(10),
+  };
+  // Object* str_args[] = {
+  //     new_str("hello "),
+  //     new_str("world"),
+  // };
+  Frame frame;
+  Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize);
+  init_frame(&frame, &code, int_args, ARRAYSIZE(int_args));
+  eval(&frame);
+  // eval(&code, int_args, ARRAYSIZE(int_args));
+  // eval(&code, str_args, ARRAYSIZE(str_args));
+  // eval(&code, str_args, ARRAYSIZE(str_args));
 }
