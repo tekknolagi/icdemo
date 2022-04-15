@@ -83,14 +83,14 @@ typedef enum {
 #define ARRAYSIZE(ARR) (sizeof(ARR) / sizeof(ARR)[0])
 
 Method lookup_method(ObjectType type, Symbol name) {
-  CHECK(type < ARRAYSIZE(kTypes) && "out of bounds type");
+  CHECK(type < ARRAYSIZE(kTypes), "out of bounds type");
   const MethodDefinition* table = kTypes[type];
   for (word i = 0; table[i].method != NULL; i++) {
     if (table[i].name == name) {
       return table[i].method;
     }
   }
-  CHECK(false && "could not find method");
+  CHECK(false, "could not find method");
 }
 
 static unsigned kBytecodeSize = 2;
@@ -109,12 +109,12 @@ typedef struct {
 typedef void (*EvalFunc)(Frame* frame);
 
 static FORCE_INLINE void frame_push(Frame* frame, Object* value) {
-  CHECK(frame->stack > frame->stack_array && "stack overflow");
+  CHECK(frame->stack > frame->stack_array, "stack overflow");
   *(--frame->stack) = value;
 }
 
 static FORCE_INLINE Object* frame_pop(Frame* frame) {
-  CHECK(frame->stack + 1 <= frame->stack_array && "stack underflow");
+  CHECK(frame->stack + 1 <= frame->stack_array, "stack underflow");
   return *(frame->stack++);
 }
 
@@ -134,7 +134,7 @@ void eval_code_uncached(Frame* frame) {
     byte arg = code->bytecode[frame->pc + 1];
     switch (op) {
       case ARG:
-        CHECK(arg < frame->nargs && "out of bounds arg");
+        CHECK(arg < frame->nargs, "out of bounds arg");
         frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
@@ -186,7 +186,7 @@ void eval_code_cached(Frame* frame) {
     byte arg = code->bytecode[frame->pc + 1];
     switch (op) {
       case ARG:
-        CHECK(arg < frame->nargs && "out of bounds arg");
+        CHECK(arg < frame->nargs, "out of bounds arg");
         frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
@@ -231,7 +231,7 @@ void eval_code_quickening(Frame* frame) {
     byte arg = code->bytecode[frame->pc + 1];
     switch (op) {
       case ARG:
-        CHECK(arg < frame->nargs && "out of bounds arg");
+        CHECK(arg < frame->nargs, "out of bounds arg");
         frame_push(frame, frame->args[arg]);
         break;
       case ADD: {

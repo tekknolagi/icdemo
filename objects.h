@@ -5,11 +5,12 @@
 #if defined(NDEBUG)
 #define CHECK
 #else
-#define CHECK(cond) \
-  do {              \
-    if (!(cond)) {  \
-      abort();      \
-    }               \
+#define CHECK(cond, msg)                                     \
+  do {                                                       \
+    if (!(cond)) {                                           \
+      fprintf(stderr, "Check failed: %s: %s\n", #cond, msg); \
+      abort();                                               \
+    }                                                        \
   } while (0)
 #endif
 
@@ -73,7 +74,7 @@ bool object_is_heap_object(Object* obj) {
 }
 
 HeapObject* object_address(Object* obj) {
-  CHECK(object_is_heap_object(obj));
+  CHECK(object_is_heap_object(obj), "expected heap object");
   return (HeapObject*)((uword)obj & ~kHeapObjectTagMask);
 }
 
@@ -91,43 +92,43 @@ ObjectType object_type(Object* obj) {
 bool object_is_str(Object* obj) { return object_type(obj) == kStr; }
 
 word object_as_int(Object* obj) {
-  CHECK(object_is_int(obj));
+  CHECK(object_is_int(obj), "expected int");
   return (word)obj >> kIntegerShift;
 }
 
 const char* object_as_str(Object* obj) {
-  CHECK(object_is_str(obj));
+  CHECK(object_is_str(obj), "expected str");
   return object_address(obj)->str_value;
 }
 
 Object* new_int(word value) {
-  CHECK(value < INTEGER_MAX && "too big");
-  CHECK(value > INTEGER_MIN && "too small");
+  CHECK(value < INTEGER_MAX, "too big");
+  CHECK(value > INTEGER_MIN, "too small");
   return (Object*)((uword)value << kIntegerShift);
 }
 
 Object* new_str(const char* value) {
   HeapObject* result = (HeapObject*)malloc(sizeof *result);
-  CHECK(result != NULL && "could not allocate object");
+  CHECK(result != NULL, "could not allocate object");
   *result = (HeapObject){.type = kStr, .str_value = value};
   return object_from_address(result);
 }
 
 Object* int_add(Object* left, Object* right) {
-  CHECK(object_is_int(left));
-  CHECK(object_is_int(right));
+  CHECK(object_is_int(left), "expected int");
+  CHECK(object_is_int(right), "expected int");
   return new_int(object_as_int(left) + object_as_int(right));
 }
 
 Object* int_print(Object* obj) {
-  CHECK(object_is_int(obj));
+  CHECK(object_is_int(obj), "expected int");
   fprintf(stderr, "int: %ld\n", object_as_int(obj));
   return obj;
 }
 
 Object* str_add(Object* left, Object* right) {
-  CHECK(object_is_str(left));
-  CHECK(object_is_str(right));
+  CHECK(object_is_str(left), "expected str");
+  CHECK(object_is_str(right), "expected str");
   word result_size =
       strlen(object_as_str(left)) + strlen(object_as_str(right)) + 1;
   char* result = (char*)malloc(result_size);
@@ -137,7 +138,7 @@ Object* str_add(Object* left, Object* right) {
 }
 
 Object* str_print(Object* obj) {
-  CHECK(object_is_str(obj));
+  CHECK(object_is_str(obj), "expected str");
   fprintf(stderr, "str: \"%s\"\n", object_as_str(obj));
   return obj;
 }
