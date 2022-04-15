@@ -1,4 +1,6 @@
+CFLAGS += -Wall -Wextra -Wpedantic
 LDFLAGS = -lm
+
 interpreter: interpreter.c
 	$(CC) $(CFLAGS) interpreter.c $(LDFLAGS) -o interpreter
 
