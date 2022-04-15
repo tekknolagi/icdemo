@@ -288,6 +288,79 @@ void eval_code_quickening(Frame* frame) {
   }
 }
 
+__attribute__((noreturn)) void rb_bug(const char* msg) {
+  fprintf(stderr, "Error: %s\n", msg);
+  abort();
+}
+
+#include "yjit_asm.c"
+
+static const x86opnd_t kBCReg = RAX;
+static const x86opnd_t kFrameReg = RDI;
+static const x86opnd_t kPCReg = RDX;
+static const x86opnd_t kOpcodeReg = BL;
+static const x86opnd_t kOpargReg = CL;
+static const x86opnd_t kOpargRegBig = RCX;
+static const x86opnd_t kUsedCalleeSavedRegs[] = {RBX};
+const word kNumCalleeSavedRegs = ARRAYSIZE(kUsedCalleeSavedRegs);
+const int kPointerSize = sizeof(void*);
+const word kFrameOffset = -kNumCalleeSavedRegs * kPointerSize;
+const word kPaddingBytes = (kFrameOffset % 16) == 0 ? 0 : kPointerSize;
+const word kNativeStackFrameSize = -kFrameOffset + kPaddingBytes;
+// Entrypoint receives arguments according to SystemV 64-bit ABI
+static const x86opnd_t kArgRegs[] = {RDI, RSI, RDX, RCX, R8, R9};
+
+const uint32_t qword = 8;
+const uint32_t dword = 4;
+
+// void emit_next_opcode(codeblock_t* cb, Label* dispatch) {
+//   add(cb, kPCReg, kBytecodeSize);
+//   jmp(cb, *dispatch);
+// }
+
+void emit_restore_interpreter_state(codeblock_t* cb) {
+  mov(cb, RSP, member_opnd(kFrameReg, Frame, stack));
+}
+
+void emit_restore_native_stack(codeblock_t* cb) {
+  mov(cb, member_opnd(kFrameReg, Frame, stack), RSP);
+  lea(cb, RSP, mem_opnd(qword, RBP, -kNumCalleeSavedRegs * kPointerSize));
+}
+
+void emit_asm_interpreter(codeblock_t* cb) {
+  // Prologue
+  // Set up a frame and save callee-saved registers we'll use.
+  push(cb, RBP);
+  mov(cb, RBP, RSP);
+  for (word i = 0; i < kNumCalleeSavedRegs; i++) {
+    push(cb, kUsedCalleeSavedRegs[i]);
+  }
+  emit_restore_interpreter_state(cb);
+
+  // assert(kFrameReg == kArgRegs[0] && "frame reg should already be loaded");
+  // TODO(max): Implement push(imm)
+  mov(cb, RAX, const_ptr_opnd(new_int(42)));
+  push(cb, RAX);
+
+  // Epilogue
+  emit_restore_native_stack(cb);
+  for (word i = kNumCalleeSavedRegs - 1; i >= 0; --i) {
+    pop(cb, kUsedCalleeSavedRegs[i]);
+  }
+  pop(cb, RBP);
+  ret(cb);
+}
+
+EvalFunc gen_asm_interpreter() {
+  codeblock_t cb;
+  const uintptr_t mem_size = 1024;
+  uint8_t* mem = alloc_exec_mem(mem_size);
+  cb_init(&cb, mem, mem_size);
+  emit_asm_interpreter(&cb);
+  cb_mark_all_executable(&cb);
+  return (EvalFunc)mem;
+}
+
 Code new_code(byte* bytecode, word num_opcodes) {
   Code result;
   result.bytecode = bytecode;
@@ -306,12 +379,16 @@ int main(int argc, char** argv) {
       eval = eval_code_cached;
     } else if (strcmp(mode, "quickening") == 0) {
       eval = eval_code_quickening;
+    } else if (strcmp(mode, "asm") == 0) {
+      EvalFunc eval_code_assembly = gen_asm_interpreter();
+      eval = eval_code_assembly;
     } else {
-      fprintf(stderr, "Usage: ./interpreter [uncached|cached|quickening]\n");
+      fprintf(stderr,
+              "Usage: ./interpreter [uncached|cached|quickening|asm]\n");
       return EXIT_FAILURE;
     }
   } else if (argc > 2) {
-    fprintf(stderr, "Usage: ./interpreter [uncached|cached|quickening]\n");
+    fprintf(stderr, "Usage: ./interpreter [uncached|cached|quickening|asm]\n");
     return EXIT_FAILURE;
   }
   byte bytecode[] = {/*0:*/ ARG, 0,
