@@ -3,7 +3,7 @@ CFLAGS += $(EXTRA_FLAGS)
 CXXFLAGS += $(EXTRA_FLAGS)
 LDFLAGS = -lm
 
-interpreter: interpreter.c
+interpreter: interpreter.c objects.h
 	$(CC) $(CFLAGS) interpreter.c $(LDFLAGS) -o interpreter
 
 asm-interpreter: interpreter.cpp

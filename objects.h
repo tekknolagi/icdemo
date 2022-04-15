@@ -5,12 +5,13 @@
 #if defined(NDEBUG)
 #define CHECK
 #else
-#define CHECK(cond, msg)                                     \
-  do {                                                       \
-    if (!(cond)) {                                           \
-      fprintf(stderr, "Check failed: %s: %s\n", #cond, msg); \
-      abort();                                               \
-    }                                                        \
+#define CHECK(cond, msg)                                                   \
+  do {                                                                     \
+    if (!(cond)) {                                                         \
+      fprintf(stderr, "Check failed: %s:%d, %s: %s\n", __FILE__, __LINE__, \
+              #cond, msg);                                                 \
+      abort();                                                             \
+    }                                                                      \
   } while (0)
 #endif
 
