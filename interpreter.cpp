@@ -337,7 +337,7 @@ void eval_code_assembly(Code* code, Object** args) {
   if (object_type(result) != kInt) {
     fprintf(stderr, "error: expected int\n");
   }
-  fprintf(stderr, "result: %d\n", object_as_int(result));
+  fprintf(stderr, "result: %ld\n", object_as_int(result));
 }
 
 Code new_code(byte* bytecode, int num_opcodes) {

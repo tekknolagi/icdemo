@@ -1,4 +1,6 @@
-CFLAGS += -Wall -Wextra -Wpedantic
+EXTRA_FLAGS = -Wall -Wextra -Wpedantic
+CFLAGS += $(EXTRA_FLAGS)
+CXXFLAGS += $(EXTRA_FLAGS)
 LDFLAGS = -lm
 
 interpreter: interpreter.c
