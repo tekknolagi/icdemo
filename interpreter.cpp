@@ -116,7 +116,8 @@ static FORCE_INLINE void push(Frame* frame, Object* value) {
 }
 
 static FORCE_INLINE Object* pop(Frame* frame) {
-  CHECK(frame->stack + 1 <= frame->stack_array && "stack underflow");
+  CHECK(frame->stack + 1 <= frame->stack_array + STACK_SIZE &&
+        "stack underflow");
   return *(frame->stack++);
 }
 

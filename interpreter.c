@@ -114,7 +114,8 @@ static FORCE_INLINE void frame_push(Frame* frame, Object* value) {
 }
 
 static FORCE_INLINE Object* frame_pop(Frame* frame) {
-  CHECK(frame->stack + 1 <= frame->stack_array, "stack underflow");
+  CHECK(frame->stack + 1 <= frame->stack_array + STACK_SIZE,
+        "stack underflow");
   return *(frame->stack++);
 }
 
@@ -313,11 +314,11 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Usage: ./interpreter [uncached|cached|quickening]\n");
     return EXIT_FAILURE;
   }
-  byte bytecode[] = {/*0:*/ ARG,   0,
-                     /*2:*/ ARG,   1,
-                     /*4:*/ ADD,   0,
-                     /*6:*/ PRINT, 0,
-                     /*8:*/ HALT,  0};
+  byte bytecode[] = {/*0:*/ ARG, 0,
+                     /*2:*/ ARG, 1,
+                     /*4:*/ ADD, 0,
+                     // /*6:*/ PRINT, 0,
+                     /*8:*/ HALT, 0};
   Object* int_args[] = {
       new_int(5),
       new_int(10),
@@ -328,6 +329,7 @@ int main(int argc, char** argv) {
   eval(&frame);
   init_frame(&frame, &code, int_args, ARRAYSIZE(int_args));
   eval(&frame);
+  fprintf(stderr, "stack top: %ld\n", object_as_int(frame_pop(&frame)));
   Object* str_args[] = {
       new_str("hello "),
       new_str("world"),
