@@ -111,13 +111,13 @@ typedef struct {
 } Frame;
 
 static FORCE_INLINE void push(Frame* frame, Object* value) {
-  CHECK(frame->stack - frame->stack_array < STACK_SIZE && "stack overflow");
-  *frame->stack++ = value;
+  CHECK(frame->stack > frame->stack_array && "stack overflow");
+  *(--frame->stack) = value;
 }
 
 static FORCE_INLINE Object* pop(Frame* frame) {
-  CHECK(frame->stack > frame->stack_array && "stack underflow");
-  return *--frame->stack;
+  CHECK(frame->stack + 1 <= frame->stack_array && "stack underflow");
+  return *(frame->stack++);
 }
 
 void init_frame(Frame* frame, Code* code, Object** args) {
