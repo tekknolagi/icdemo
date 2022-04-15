@@ -218,16 +218,17 @@ void eval_code_quickening(Code* code, Object** args, int nargs) {
 using Register = Xbyak::Reg64;
 using Label = Xbyak::Label;
 using Xbyak::util::bl;
+using Xbyak::util::cl;
 using Xbyak::util::r8;
 using Xbyak::util::r9;
 using Xbyak::util::rax;
+using Xbyak::util::rbp;
 using Xbyak::util::rcx;
-using Xbyak::util::cl;
 using Xbyak::util::rdi;
 using Xbyak::util::rdx;
 using Xbyak::util::rsi;
-using Xbyak::util::rbp;
 using Xbyak::util::rsp;
+namespace x = Xbyak::util;
 
 static const Register kBCReg = rax;
 static const Register kFrameReg = rdi;
@@ -237,6 +238,10 @@ static const Xbyak::Reg8 kOpargReg = cl;
 static const Register kOpargRegBig = rcx;
 static const Register kUsedCalleeSavedRegs[] = {Xbyak::util::rbx};
 const word kNumCalleeSavedRegs = ARRAYSIZE(kUsedCalleeSavedRegs);
+const int kPointerSize = sizeof(void*);
+const word kFrameOffset = -kNumCalleeSavedRegs * kPointerSize;
+const word kPaddingBytes = (kFrameOffset % 16) == 0 ? 0 : kPointerSize;
+const word kNativeStackFrameSize = -kFrameOffset + kPaddingBytes;
 // Entrypoint receives arguments according to SystemV 64-bit ABI
 static const Register kArgRegs[] = {rdi, rsi, rdx, rcx, r8, r9};
 
@@ -245,16 +250,23 @@ void emit_next_opcode(Xbyak::CodeGenerator* as, Label* dispatch) {
   __ jmp(*dispatch);
 }
 
-void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
-  namespace x = Xbyak::util;
+void emit_restore_interpreter_state(Xbyak::CodeGenerator* as) {
+  __ mov(rsp, x::qword[kFrameReg + offsetof(Frame, stack)]);
+}
 
-    __ int3();
+void emit_restore_native_stack(Xbyak::CodeGenerator* as) {
+  // __ lea(rsp, x::qword[rbp - kNativeStackFrameSize]);
+  __ lea(rsp, x::qword[rbp - kNumCalleeSavedRegs * kPointerSize]);
+}
+
+void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
   // Set up a frame and save callee-saved registers we'll use.
   __ push(rbp);
   __ mov(rbp, rsp);
   for (Register r : kUsedCalleeSavedRegs) {
     __ push(r);
   }
+  emit_restore_interpreter_state(as);
 
   //__ int3();
   // Load the frame from the first arg
@@ -340,6 +352,7 @@ void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
   }
 
   __ L(end);
+  emit_restore_native_stack(as);
   for (::word i = kNumCalleeSavedRegs - 1; i >= 0; --i) {
     __ pop(kUsedCalleeSavedRegs[i]);
   }
