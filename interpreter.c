@@ -6,6 +6,9 @@
 
 #include "objects.h"
 
+typedef word intptr_t;
+typedef uword uintptr_t;
+
 // TODO(max): Consider writing this in Rust or Nim for some extra reader
 // appeal.
 
@@ -105,21 +108,20 @@ typedef struct {
 
 typedef void (*EvalFunc)(Frame* frame);
 
-static FORCE_INLINE void push(Frame* frame, Object* value) {
-  CHECK(frame->stack >= frame->stack_array && "stack overflow");
-  *frame->stack-- = value;
+static FORCE_INLINE void frame_push(Frame* frame, Object* value) {
+  CHECK(frame->stack > frame->stack_array && "stack overflow");
+  *(--frame->stack) = value;
 }
 
-static FORCE_INLINE Object* pop(Frame* frame) {
-  CHECK(frame->stack < frame->stack_array + STACK_SIZE - 1 &&
-        "stack underflow");
-  return *++frame->stack;
+static FORCE_INLINE Object* frame_pop(Frame* frame) {
+  CHECK(frame->stack + 1 <= frame->stack_array && "stack underflow");
+  return *(frame->stack++);
 }
 
 void init_frame(Frame* frame, Code* code, Object** args, word nargs) {
   frame->pc = 0;
-  // last valid slot in the stack
-  frame->stack = frame->stack_array + STACK_SIZE - 1;
+  // stack grows down
+  frame->stack = frame->stack_array + STACK_SIZE;
   frame->code = code;
   frame->args = args;
   frame->nargs = nargs;
@@ -133,18 +135,18 @@ void eval_code_uncached(Frame* frame) {
     switch (op) {
       case ARG:
         CHECK(arg < frame->nargs && "out of bounds arg");
-        push(frame, frame->args[arg]);
+        frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         Method method = lookup_method(object_type(left), kAdd);
         Object* result = (*method)(left, right);
-        push(frame, result);
+        frame_push(frame, result);
         break;
       }
       case PRINT: {
-        Object* obj = pop(frame);
+        Object* obj = frame_pop(frame);
         Method method = lookup_method(object_type(obj), kPrint);
         (*method)(obj);
         break;
@@ -174,7 +176,7 @@ void add_update_cache(Frame* frame, Object* left, Object* right) {
   fprintf(stderr, "updating cache at %ld\n", frame->pc);
   cache_at_put(frame, object_type(left), method);
   Object* result = (*method)(left, right);
-  push(frame, result);
+  frame_push(frame, result);
 }
 
 void eval_code_cached(Frame* frame) {
@@ -185,11 +187,11 @@ void eval_code_cached(Frame* frame) {
     switch (op) {
       case ARG:
         CHECK(arg < frame->nargs && "out of bounds arg");
-        push(frame, frame->args[arg]);
+        frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         CachedValue cached = cache_at(frame);
         Method method = cached.value;
         if (method == NULL || cached.key != object_type(left)) {
@@ -198,11 +200,11 @@ void eval_code_cached(Frame* frame) {
         }
         fprintf(stderr, "using cached value at %ld\n", frame->pc);
         Object* result = (*method)(left, right);
-        push(frame, result);
+        frame_push(frame, result);
         break;
       }
       case PRINT: {
-        Object* obj = pop(frame);
+        Object* obj = frame_pop(frame);
         Method method = lookup_method(object_type(obj), kPrint);
         (*method)(obj);
         break;
@@ -219,7 +221,7 @@ void eval_code_cached(Frame* frame) {
 
 void do_add_int(Frame* frame, Object* left, Object* right) {
   Object* result = int_add(left, right);
-  push(frame, result);
+  frame_push(frame, result);
 }
 
 void eval_code_quickening(Frame* frame) {
@@ -230,11 +232,11 @@ void eval_code_quickening(Frame* frame) {
     switch (op) {
       case ARG:
         CHECK(arg < frame->nargs && "out of bounds arg");
-        push(frame, frame->args[arg]);
+        frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         if (object_type(left) == kInt) {
           do_add_int(frame, left, right);
           code->bytecode[frame->pc] = ADD_INT;
@@ -245,8 +247,8 @@ void eval_code_quickening(Frame* frame) {
         break;
       }
       case ADD_CACHED: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         CachedValue cached = cache_at(frame);
         if (cached.key != object_type(left)) {
           add_update_cache(frame, left, right);
@@ -255,12 +257,12 @@ void eval_code_quickening(Frame* frame) {
         fprintf(stderr, "using cached value at %ld\n", frame->pc);
         Method method = cached.value;
         Object* result = (*method)(left, right);
-        push(frame, result);
+        frame_push(frame, result);
         break;
       }
       case ADD_INT: {
-        Object* right = pop(frame);
-        Object* left = pop(frame);
+        Object* right = frame_pop(frame);
+        Object* left = frame_pop(frame);
         if (object_type(left) != kInt) {
           add_update_cache(frame, left, right);
           code->bytecode[frame->pc] = ADD_CACHED;
@@ -270,7 +272,7 @@ void eval_code_quickening(Frame* frame) {
         break;
       }
       case PRINT: {
-        Object* obj = pop(frame);
+        Object* obj = frame_pop(frame);
         Method method = lookup_method(object_type(obj), kPrint);
         (*method)(obj);
         break;
