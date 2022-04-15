@@ -226,6 +226,8 @@ using Xbyak::util::cl;
 using Xbyak::util::rdi;
 using Xbyak::util::rdx;
 using Xbyak::util::rsi;
+using Xbyak::util::rbp;
+using Xbyak::util::rsp;
 
 static const Register kBCReg = rax;
 static const Register kFrameReg = rdi;
@@ -233,6 +235,8 @@ static const Register kPCReg = rdx;
 static const Xbyak::Reg8 kOpcodeReg = bl;
 static const Xbyak::Reg8 kOpargReg = cl;
 static const Register kOpargRegBig = rcx;
+static const Register kUsedCalleeSavedRegs[] = {Xbyak::util::rbx};
+const word kNumCalleeSavedRegs = ARRAYSIZE(kUsedCalleeSavedRegs);
 // Entrypoint receives arguments according to SystemV 64-bit ABI
 static const Register kArgRegs[] = {rdi, rsi, rdx, rcx, r8, r9};
 
@@ -242,21 +246,30 @@ void emit_next_opcode(Xbyak::CodeGenerator* as, Label* dispatch) {
 }
 
 void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
-  using namespace Xbyak::util;
+  namespace x = Xbyak::util;
+
+    __ int3();
+  // Set up a frame and save callee-saved registers we'll use.
+  __ push(rbp);
+  __ mov(rbp, rsp);
+  for (Register r : kUsedCalleeSavedRegs) {
+    __ push(r);
+  }
+
   //__ int3();
   // Load the frame from the first arg
   __ mov(kFrameReg, kArgRegs[0]);
   // Load the bytecode pointer into a register
-  __ mov(kBCReg, qword[kFrameReg + offsetof(Frame, code)]);
-  __ mov(kBCReg, qword[kBCReg + offsetof(Code, bytecode)]);
+  __ mov(kBCReg, x::qword[kFrameReg + offsetof(Frame, code)]);
+  __ mov(kBCReg, x::qword[kBCReg + offsetof(Code, bytecode)]);
   // Initialize PC
   __ xor_(kPCReg, kPCReg);
 
   // while (true) {
   Label dispatch;
   __ L(dispatch);
-  __ mov(kOpcodeReg, Xbyak::util::byte[kBCReg + kPCReg]);
-  __ mov(kOpargReg, Xbyak::util::byte[kBCReg + kPCReg + 1]);
+  __ mov(kOpcodeReg, x::byte[kBCReg + kPCReg]);
+  __ mov(kOpargReg, x::byte[kBCReg + kPCReg + 1]);
 
   // TODO(max): Make dispatch via a jump table instead of a series of
   // comparisons. With xbyak use putlabel/putL?
@@ -288,9 +301,11 @@ void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
   {
     Register r_scratch = r8;
     // Object** args = frame->args
-    __ mov(r_scratch, qword[kFrameReg + offsetof(Frame, args)]);
+    __ mov(r_scratch, x::qword[kFrameReg + offsetof(Frame, args)]);
     // push(args[arg])
-    __ push(qword[r_scratch + kOpargRegBig]);
+    // TODO(max): Figure out why a massive value is getting pushed for one of
+    // the args! It's like 0x28000000000 instead of 0x28 or something.
+    __ push(x::qword[r_scratch + kOpargRegBig]);
     emit_next_opcode(as, &dispatch);
   }
 
@@ -317,11 +332,19 @@ void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
     __ ret();
   }
 
+  Label end;
   __ L(handlers[HALT]);
   {
     __ pop(rax);
-    __ ret();
+    __ jmp(end);
   }
+
+  __ L(end);
+  for (::word i = kNumCalleeSavedRegs - 1; i >= 0; --i) {
+    __ pop(kUsedCalleeSavedRegs[i]);
+  }
+  __ pop(rbp);
+  __ ret();
 }
 
 // Signature of the generated function.
