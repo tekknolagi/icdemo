@@ -317,6 +317,7 @@ void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
     // push(args[arg])
     // TODO(max): Figure out why a massive value is getting pushed for one of
     // the args! It's like 0x28000000000 instead of 0x28 or something.
+    __ int3();
     __ push(x::qword[r_scratch + kOpargRegBig]);
     emit_next_opcode(as, &dispatch);
   }
@@ -373,7 +374,7 @@ void eval_code_assembly(Code* code, Object** args) {
   if (object_type(result) != kInt) {
     fprintf(stderr, "error: expected int\n");
   }
-  fprintf(stderr, "result: %ld\n", object_as_int(result));
+  fprintf(stderr, "result: %p (%ld)\n", (void*)result, object_as_int(result));
 }
 
 Code new_code(byte* bytecode, int num_opcodes) {
@@ -384,7 +385,7 @@ Code new_code(byte* bytecode, int num_opcodes) {
   return result;
 }
 
-int main(int argc, char** argv) {
+int main() {
   void (*eval)(Code*, Object**) = eval_code_assembly;
   // byte bytecode[] = {/*0:*/ ARG,   2,
   //                    /*2:*/ ARG,   0,
@@ -409,7 +410,8 @@ int main(int argc, char** argv) {
       new_int(42),
       new_int(20),
   };
-  fprintf(stderr, "args %p, %p\n", int_args[0], int_args[1]);
+  fprintf(stderr, "args %ld, %ld\n", object_as_int(int_args[0]),
+          object_as_int(int_args[1]));
   Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize);
   eval(&code, int_args);
   // eval(&code, int_args);
