@@ -268,7 +268,6 @@ void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
   }
   emit_restore_interpreter_state(as);
 
-  //__ int3();
   // Load the frame from the first arg
   __ mov(kFrameReg, kArgRegs[0]);
   // Load the bytecode pointer into a register
@@ -315,10 +314,7 @@ void emit_assembly_interpreter(Xbyak::CodeGenerator* as) {
     // Object** args = frame->args
     __ mov(r_scratch, x::qword[kFrameReg + offsetof(Frame, args)]);
     // push(args[arg])
-    // TODO(max): Figure out why a massive value is getting pushed for one of
-    // the args! It's like 0x28000000000 instead of 0x28 or something.
-    __ int3();
-    __ push(x::qword[r_scratch + kOpargRegBig]);
+    __ push(x::qword[r_scratch + kOpargRegBig * kPointerSize]);
     emit_next_opcode(as, &dispatch);
   }
 
