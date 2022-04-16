@@ -78,6 +78,8 @@ typedef enum {
   PRINT,
   // Halt the machine.
   HALT,
+
+  NUM_OPCODES,
 } Opcode;
 
 #define ARRAYSIZE(ARR) (sizeof(ARR) / sizeof(ARR)[0])
@@ -310,13 +312,47 @@ const word kNativeStackFrameSize = -kFrameOffset + kPaddingBytes;
 // Entrypoint receives arguments according to SystemV 64-bit ABI
 static const x86opnd_t kArgRegs[] = {RDI, RSI, RDX, RCX, R8, R9};
 
-const uint32_t qword = 8;
-const uint32_t dword = 4;
+const uint32_t qword = 8 * kBitsPerByte;
+const uint32_t dword = 4 * kBitsPerByte;
 
-// void emit_next_opcode(codeblock_t* cb, Label* dispatch) {
-//   add(cb, kPCReg, kBytecodeSize);
-//   jmp(cb, *dispatch);
-// }
+typedef struct {
+  uint32_t index_;
+  const char* name_;
+  bool bound_;
+  bool initialized_;
+} Label;
+
+void Label_new(Label* label, const char* name) {
+  label->name_ = name;
+  label->bound_ = false;
+  label->initialized_ = false;
+}
+
+void Label_init(Label* label, codeblock_t* cb) {
+  label->index_ = cb_new_label(cb, label->name_);
+  label->initialized_ = true;
+}
+
+bool Label_is_initialized(Label* label) { return label->initialized_; }
+
+uint32_t Label_index(Label* label) {
+  CHECK(Label_is_initialized(label), "expected label to be initialized");
+  return label->index_;
+}
+
+bool Label_is_bound(Label* label) { return label->bound_; }
+
+void Label_bind(Label* label, codeblock_t* cb) {
+  CHECK(Label_is_initialized(label), "expected label to be initialized");
+  CHECK(!Label_is_bound(label), "expected label not to be bound");
+  cb_write_label(cb, Label_index(label));
+  label->bound_ = true;
+}
+
+void emit_next_opcode(codeblock_t* cb, Label* dispatch) {
+  add(cb, kPCReg, imm_opnd(kBytecodeSize));
+  jmp_label(cb, Label_index(dispatch));
+}
 
 void emit_restore_interpreter_state(codeblock_t* cb) {
   mov(cb, RSP, member_opnd(kFrameReg, Frame, stack));
@@ -326,6 +362,24 @@ void emit_restore_native_stack(codeblock_t* cb) {
   mov(cb, member_opnd(kFrameReg, Frame, stack), RSP);
   lea(cb, RSP, mem_opnd(qword, RBP, -kNumCalleeSavedRegs * kPointerSize));
 }
+
+#define INIT(name)         \
+  Label_new(&name, #name); \
+  Label_init(&name, cb)
+#define L(name) \
+  Label name;   \
+  INIT(name)
+#define BIND(name) Label_bind(&name, cb)
+#define B(name) \
+  L(name);      \
+  BIND(name)
+#define OP(op, name)                    \
+  do {                                  \
+    if (!Label_is_initialized(&name)) { \
+      Label_init(&name, cb);            \
+    }                                   \
+    op##_label(cb, Label_index(&name)); \
+  } while (0)
 
 void emit_asm_interpreter(codeblock_t* cb) {
   // Prologue
@@ -337,7 +391,62 @@ void emit_asm_interpreter(codeblock_t* cb) {
   }
   emit_restore_interpreter_state(cb);
 
+  // Load the frame from the first arg
+  // TODO(max): Just assert instead of moving
   // assert(kFrameReg == kArgRegs[0] && "frame reg should already be loaded");
+  mov(cb, kFrameReg, kArgRegs[0]);
+  // Load the bytecode pointer into a register
+  mov(cb, kBCReg, member_opnd(kFrameReg, Frame, code));
+  mov(cb, kBCReg, member_opnd(kFrameReg, Code, bytecode));
+  // Initialize pc
+  xor(cb, kPCReg, kPCReg);
+
+  // while (true) {
+  B(dispatch);
+  mov(cb, kOpcodeReg,
+      mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
+                   /*disp=*/0));
+  mov(cb, kOpargReg,
+      mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
+                   /*disp=*/1));
+
+  Label handlers[NUM_OPCODES];
+  for (word i = 0; i < NUM_OPCODES; i++) {
+    cmp(cb, kOpcodeReg, imm_opnd(i));
+    INIT(handlers[i]);
+    je_label(cb, Label_index(&handlers[i]));
+  }
+  // Fall-through for invalid opcodes, I guess
+  int3(cb);
+  mov(cb, RAX, imm_opnd(-1));
+  ret(cb);
+
+  {
+    Label_bind(&handlers[ARG], cb);
+    x86opnd_t r_scratch = R8;
+    // Object** args = frame->args
+    mov(cb, r_scratch, member_opnd(kFrameReg, Frame, args));
+    // push(args[arg])
+    push(cb,
+         mem_opnd_sib(qword, r_scratch, kOpargRegBig, /*scale=*/kPointerSize,
+                      /*disp=*/0));
+    emit_next_opcode(cb, &dispatch);
+  }
+
+  {
+    Label_bind(&handlers[ADD_INT], cb);
+    int3(cb);
+    mov(cb, RAX, imm_opnd(-1));
+    ret(cb);
+  }
+
+  {
+    Label_bind(&handlers[HALT], cb);
+    int3(cb);
+    mov(cb, RAX, imm_opnd(-1));
+    ret(cb);
+  }
+
   // TODO(max): Implement push(imm)
   mov(cb, RAX, const_ptr_opnd(new_int(42)));
   push(cb, RAX);
@@ -357,6 +466,7 @@ EvalFunc gen_asm_interpreter() {
   uint8_t* mem = alloc_exec_mem(mem_size);
   cb_init(&cb, mem, mem_size);
   emit_asm_interpreter(&cb);
+  cb_link_labels(&cb);
   cb_mark_all_executable(&cb);
   return (EvalFunc)mem;
 }
