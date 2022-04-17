@@ -360,7 +360,9 @@ void emit_restore_interpreter_state(codeblock_t* cb) {
 
 void emit_restore_native_stack(codeblock_t* cb) {
   mov(cb, member_opnd(kFrameReg, Frame, stack), RSP);
-  lea(cb, RSP, mem_opnd(qword, RBP, -kNumCalleeSavedRegs * kPointerSize));
+  lea(cb, RSP,
+      mem_opnd(qword, RBP,
+               kNumCalleeSavedRegs * kPointerSize + kPaddingBytes));
 }
 
 #define INIT(name)         \
