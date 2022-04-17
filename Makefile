@@ -3,8 +3,8 @@ CFLAGS += $(EXTRA_FLAGS)
 CXXFLAGS += $(EXTRA_FLAGS)
 LDFLAGS = -lm
 
-interpreter: interpreter.c objects.h yjit_asm.h yjit_asm.c
-	$(CC) $(CFLAGS) interpreter.c $(LDFLAGS) -o interpreter
+build/interpreter: interpreter.c objects.h yjit_asm.h yjit_asm.c
+	$(CC) $(CFLAGS) interpreter.c $(LDFLAGS) -o $@
 
 make clean:
-	rm interpreter asm-interpreter
+	rm interpreter
