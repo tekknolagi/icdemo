@@ -298,8 +298,7 @@ __attribute__((noreturn)) void rb_bug(const char* msg) {
 #include "yjit_asm.c"
 
 static const x86opnd_t kBCReg = RAX;
-// TODO(max): Consider using R12 for frame since it's callee-saved
-static const x86opnd_t kFrameReg = RDI;
+static const x86opnd_t kFrameReg = R12;
 static const x86opnd_t kPCReg = RDX;
 static const x86opnd_t kOpcodeReg = BL;
 static const x86opnd_t kOpargReg = CL;
@@ -398,7 +397,7 @@ __attribute__((noreturn)) void report_error(const char* msg) {
 
 void asm_error(codeblock_t* cb, const char* msg, Label* error) {
   emit_restore_native_stack(cb);
-  mov(cb, RDI, const_ptr_opnd(msg));
+  mov(cb, kArgRegs[0], const_ptr_opnd(msg));
   jmp_label(cb, Label_index(error));
 }
 
@@ -410,15 +409,15 @@ void emit_asm_interpreter(codeblock_t* cb) {
   for (word i = 0; i < kNumCalleeSavedRegs; i++) {
     push(cb, kUsedCalleeSavedRegs[i]);
   }
-  emit_restore_interpreter_state(cb);
 
   // Load the frame from the first arg
-  // TODO(max): Just assert instead of moving
-  // assert(kFrameReg == kArgRegs[0] && "frame reg should already be loaded");
   mov(cb, kFrameReg, kArgRegs[0]);
+  emit_restore_interpreter_state(cb);
+
   // Load the bytecode pointer into a register
   mov(cb, kBCReg, member_opnd(kFrameReg, Frame, code));
   mov(cb, kBCReg, member_opnd(kBCReg, Code, bytecode));
+
   // Initialize pc
   xor(cb, kPCReg, kPCReg);
 
