@@ -298,6 +298,7 @@ __attribute__((noreturn)) void rb_bug(const char* msg) {
 #include "yjit_asm.c"
 
 static const x86opnd_t kBCReg = RAX;
+// TODO(max): Consider using R12 for frame since it's callee-saved
 static const x86opnd_t kFrameReg = RDI;
 static const x86opnd_t kPCReg = RDX;
 static const x86opnd_t kOpcodeReg = BL;
@@ -358,11 +359,18 @@ void emit_restore_interpreter_state(codeblock_t* cb) {
   mov(cb, RSP, member_opnd(kFrameReg, Frame, stack));
 }
 
+// TODO(max): Figure out why this one and _at_end are different.
 void emit_restore_native_stack(codeblock_t* cb) {
   mov(cb, member_opnd(kFrameReg, Frame, stack), RSP);
   lea(cb, RSP,
       mem_opnd(qword, RBP,
                kNumCalleeSavedRegs * kPointerSize + kPaddingBytes));
+}
+
+// TODO(max): Figure out why this one and above are different.
+void emit_restore_native_stack_at_end(codeblock_t* cb) {
+  mov(cb, member_opnd(kFrameReg, Frame, stack), RSP);
+  lea(cb, RSP, mem_opnd(qword, RBP, -kNumCalleeSavedRegs * kPointerSize));
 }
 
 #define INIT(name)         \
@@ -383,6 +391,17 @@ void emit_restore_native_stack(codeblock_t* cb) {
     op##_label(cb, Label_index(&name)); \
   } while (0)
 
+__attribute__((noreturn)) void report_error(const char* msg) {
+  fprintf(stderr, "Error from asm: %s\n", msg);
+  abort();
+}
+
+void asm_error(codeblock_t* cb, const char* msg, Label* error) {
+  emit_restore_native_stack(cb);
+  mov(cb, RDI, const_ptr_opnd(msg));
+  jmp_label(cb, Label_index(error));
+}
+
 void emit_asm_interpreter(codeblock_t* cb) {
   // Prologue
   // Set up a frame and save callee-saved registers we'll use.
@@ -399,7 +418,7 @@ void emit_asm_interpreter(codeblock_t* cb) {
   mov(cb, kFrameReg, kArgRegs[0]);
   // Load the bytecode pointer into a register
   mov(cb, kBCReg, member_opnd(kFrameReg, Frame, code));
-  mov(cb, kBCReg, member_opnd(kFrameReg, Code, bytecode));
+  mov(cb, kBCReg, member_opnd(kBCReg, Code, bytecode));
   // Initialize pc
   xor(cb, kPCReg, kPCReg);
 
@@ -412,6 +431,8 @@ void emit_asm_interpreter(codeblock_t* cb) {
       mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
                    /*disp=*/1));
 
+  L(error);
+
   Label handlers[NUM_OPCODES];
   for (word i = 0; i < NUM_OPCODES; i++) {
     cmp(cb, kOpcodeReg, imm_opnd(i));
@@ -419,12 +440,10 @@ void emit_asm_interpreter(codeblock_t* cb) {
     je_label(cb, Label_index(&handlers[i]));
   }
   // Fall-through for invalid opcodes, I guess
-  int3(cb);
-  mov(cb, RAX, imm_opnd(-1));
-  ret(cb);
+  asm_error(cb, "invalid opcode", &error);
 
   {
-    Label_bind(&handlers[ARG], cb);
+    BIND(handlers[ARG]);
     x86opnd_t r_scratch = R8;
     // Object** args = frame->args
     mov(cb, r_scratch, member_opnd(kFrameReg, Frame, args));
@@ -436,30 +455,59 @@ void emit_asm_interpreter(codeblock_t* cb) {
   }
 
   {
-    Label_bind(&handlers[ADD_INT], cb);
-    int3(cb);
-    mov(cb, RAX, imm_opnd(-1));
-    ret(cb);
+    BIND(handlers[ADD]);
+    // TODO(max): Call to C function
+    asm_error(cb, "unimplemented: ADD", &error);
   }
 
   {
-    Label_bind(&handlers[HALT], cb);
-    int3(cb);
-    mov(cb, RAX, imm_opnd(-1));
-    ret(cb);
+    BIND(handlers[ADD_CACHED]);
+    // TODO(max): Call to C function
+    asm_error(cb, "unimplemented: ADD_CACHED", &error);
   }
 
-  // TODO(max): Implement push(imm)
-  mov(cb, RAX, const_ptr_opnd(new_int(42)));
-  push(cb, RAX);
+  {
+    BIND(handlers[ADD_INT]);
+    x86opnd_t r_right = R8;
+    x86opnd_t r_left = R9;
+    pop(cb, r_right);
+    pop(cb, r_left);
+    // Check both are ints
+    CHECK(kIntegerTag == 0 && kIntegerShift == 1, "unexpected int tag");
+    test(cb, r_left, imm_opnd(kIntegerTagMask));
+    L(non_int);
+    jnz_label(cb, Label_index(&non_int));
+    test(cb, r_right, imm_opnd(kIntegerTagMask));
+    jnz_label(cb, Label_index(&non_int));
+    add(cb, r_left, r_right);
+    push(cb, r_left);
+    emit_next_opcode(cb, &dispatch);
+
+    BIND(non_int);
+    // TODO(max): Call to C function to execute and rewrite opcode
+    asm_error(cb, "expected an integer in ADD_INT", &error);
+  }
+
+  {
+    BIND(handlers[PRINT]);
+    // TODO(max): Call to C function
+    asm_error(cb, "unimplemented: PRINT", &error);
+  }
 
   // Epilogue
-  emit_restore_native_stack(cb);
+  BIND(handlers[HALT]);
+  emit_restore_native_stack_at_end(cb);
   for (word i = kNumCalleeSavedRegs - 1; i >= 0; --i) {
     pop(cb, kUsedCalleeSavedRegs[i]);
   }
   pop(cb, RBP);
   ret(cb);
+
+  // Error case
+  BIND(error);
+  mov(cb, RAX, const_ptr_opnd((void*)report_error));
+  call(cb, RAX);
+  ud2(cb);
 }
 
 EvalFunc gen_asm_interpreter() {
@@ -505,7 +553,7 @@ int main(int argc, char** argv) {
   }
   byte bytecode[] = {/*0:*/ ARG, 0,
                      /*2:*/ ARG, 1,
-                     /*4:*/ ADD, 0,
+                     /*4:*/ ADD_INT, 0,
                      // /*6:*/ PRINT, 0,
                      /*8:*/ HALT, 0};
   Object* int_args[] = {
