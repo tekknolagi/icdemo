@@ -79,6 +79,11 @@ HeapObject* object_address(Object* obj) {
   return (HeapObject*)((uword)obj & ~kHeapObjectTagMask);
 }
 
+void object_free(Object* obj) {
+  CHECK(object_is_heap_object(obj), "expected heap object");
+  free(object_address(obj));
+}
+
 Object* object_from_address(HeapObject* obj) {
   return (Object*)((uword)obj | kHeapObjectTag);
 }
