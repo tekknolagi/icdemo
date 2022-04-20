@@ -249,8 +249,8 @@ void do_add_cached(Frame* frame) {
   frame_push(frame, result);
 }
 
-void do_add_update_cache(Frame* frame) {
-  fprintf(stderr, "do_add_update_cache\n");
+void add_cached_update_cache(Frame* frame) {
+  fprintf(stderr, "add_cached_update_cache\n");
   Object* right = frame_pop(frame);
   Object* left = frame_pop(frame);
   Code* code = frame->code;
@@ -275,7 +275,7 @@ void eval_code_quickening(Frame* frame) {
         frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
-        do_add_update_cache(frame);
+        add_cached_update_cache(frame);
         break;
       }
       case ADD_CACHED: {
@@ -470,7 +470,7 @@ void emit_asm_interpreter(codeblock_t* cb) {
     BIND(handlers[ADD]);
     emit_restore_native_stack(cb);
     mov(cb, kArgRegs[0], kFrameReg);
-    mov(cb, RAX, const_ptr_opnd((void*)do_add_update_cache));
+    mov(cb, RAX, const_ptr_opnd((void*)add_cached_update_cache));
     call(cb, RAX);
     emit_restore_interpreter_state(cb);
     emit_next_opcode(cb, &dispatch);
@@ -530,7 +530,7 @@ void emit_asm_interpreter(codeblock_t* cb) {
     push(cb, r_right);
     emit_restore_native_stack(cb);
     mov(cb, kArgRegs[0], kFrameReg);
-    mov(cb, RAX, const_ptr_opnd((void*)do_add_update_cache));
+    mov(cb, RAX, const_ptr_opnd((void*)add_cached_update_cache));
     call(cb, RAX);
     emit_restore_interpreter_state(cb);
     emit_next_opcode(cb, &dispatch);
