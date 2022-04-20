@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -123,6 +124,14 @@ static FORCE_INLINE Object* frame_pop(Frame* frame) {
   return *(frame->stack++);
 }
 
+NORETURN void rb_bug(const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+  vfprintf(stderr, format, args);
+  va_end(args);
+  abort();
+}
+
 void init_frame(Frame* frame, Code* code, Object** args, word nargs) {
   frame->pc = 0;
   // stack grows down
@@ -164,8 +173,7 @@ void eval_code_uncached(Frame* frame) {
       case HALT:
         return;
       default:
-        fprintf(stderr, "unknown opcode %d\n", op);
-        abort();
+        rb_bug("unknown opcode %d\n", op);
     }
   }
 }
@@ -226,8 +234,7 @@ void eval_code_cached(Frame* frame) {
       case HALT:
         return;
       default:
-        fprintf(stderr, "unknown opcode %d\n", op);
-        abort();
+        rb_bug("unknown opcode %d\n", op);
     }
   }
 }
@@ -303,15 +310,9 @@ void eval_code_quickening(Frame* frame) {
       case HALT:
         return;
       default:
-        fprintf(stderr, "unknown opcode %d\n", op);
-        abort();
+        rb_bug("unknown opcode %d\n", op);
     }
   }
-}
-
-NORETURN void rb_bug(const char* msg) {
-  fprintf(stderr, "Error: %s\n", msg);
-  abort();
 }
 
 #include "yjit_asm.c"
@@ -420,8 +421,7 @@ void emit_restore_native_stack(codeblock_t* cb) {
   } while (0)
 
 NORETURN void report_error(const char* msg) {
-  fprintf(stderr, "Error from asm: %s\n", msg);
-  abort();
+  rb_bug("Error from asm: %s\n", msg);
 }
 
 void asm_error(codeblock_t* cb, const char* msg, Label* error) {
