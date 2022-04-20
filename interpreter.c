@@ -237,6 +237,20 @@ void do_add_int(Frame* frame, Object* left, Object* right) {
   frame_push(frame, result);
 }
 
+void do_add_cached(Frame* frame) {
+  Object* right = frame_pop(frame);
+  Object* left = frame_pop(frame);
+  CachedValue cached = cache_at(frame);
+  if (cached.key != object_type(left)) {
+    add_update_cache(frame, left, right);
+    return;
+  }
+  fprintf(stderr, "using cached value at %ld\n", current_pc(frame));
+  Method method = cached.value;
+  Object* result = (*method)(left, right);
+  frame_push(frame, result);
+}
+
 void do_add_update_cache(Frame* frame) {
   fprintf(stderr, "do_add_update_cache\n");
   Object* right = frame_pop(frame);
@@ -267,17 +281,7 @@ void eval_code_quickening(Frame* frame) {
         break;
       }
       case ADD_CACHED: {
-        Object* right = frame_pop(frame);
-        Object* left = frame_pop(frame);
-        CachedValue cached = cache_at(frame);
-        if (cached.key != object_type(left)) {
-          add_update_cache(frame, left, right);
-          break;
-        }
-        fprintf(stderr, "using cached value at %ld\n", current_pc(frame));
-        Method method = cached.value;
-        Object* result = (*method)(left, right);
-        frame_push(frame, result);
+        do_add_cached(frame);
         break;
       }
       case ADD_INT: {
@@ -477,8 +481,34 @@ void emit_asm_interpreter(codeblock_t* cb) {
 
   {
     BIND(handlers[ADD_CACHED]);
-    // TODO(max): Call to C function
-    asm_error(cb, "unimplemented: ADD_CACHED", &error);
+    emit_restore_native_stack(cb);
+    mov(cb, kArgRegs[0], kFrameReg);
+    mov(cb, RAX, const_ptr_opnd((void*)do_add_cached));
+    call(cb, RAX);
+    emit_restore_interpreter_state(cb);
+    emit_next_opcode(cb, &dispatch);
+
+    // TODO(max): Implement in asm
+    // x86opnd_t r_right = R8;
+    // x86opnd_t r_left = R9;
+    // x86opnd_t r_cache = R10;
+    // x86opnd_t r_cache_idx = R11;
+    // pop(cb, r_right);
+    // pop(cb, r_left);
+    // L(cache_miss);
+    // // TODO(max): Check type against type in cache
+    // mov(cb, r_cache, member_opnd(kFrameReg, Frame, code));
+    // mov(cb, r_cache, member_opnd(r_cache, Code, caches));
+    // mov(cb, r_cache_idx, kPCReg);
+    // CHECK(kBytecodeSize == 2, "expected bytecode size to be 2");
+    // shr(cb, r_cache_idx, 1);
+    // x86opnd_t r_key = r_cache;
+    // mov(cb, r_key, mem_opnd(qword, r_cache, r_cache_idx));
+    // x86opnd_t r_type = r_cache_idx;
+    // mov(cb,
+    // cmp(cb, r_cache,
+
+    // BIND(cache_miss);
   }
 
   {
