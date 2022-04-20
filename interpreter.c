@@ -499,8 +499,14 @@ void emit_asm_interpreter(codeblock_t* cb) {
     emit_next_opcode(cb, &dispatch);
 
     BIND(non_int);
-    // TODO(max): Call to C function to execute and rewrite opcode
-    asm_error(cb, "expected an integer in ADD_INT", &error);
+    push(cb, r_left);
+    push(cb, r_right);
+    emit_restore_native_stack(cb);
+    mov(cb, kArgRegs[0], kFrameReg);
+    mov(cb, RAX, const_ptr_opnd((void*)do_add_update_cache));
+    call(cb, RAX);
+    emit_restore_interpreter_state(cb);
+    emit_next_opcode(cb, &dispatch);
   }
 
   {
