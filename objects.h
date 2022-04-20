@@ -76,7 +76,7 @@ bool object_is_heap_object(Object* obj) {
 
 HeapObject* object_address(Object* obj) {
   CHECK(object_is_heap_object(obj), "expected heap object");
-  return (HeapObject*)((uword)obj & ~kHeapObjectTagMask);
+  return (HeapObject*)((uword)obj - kHeapObjectTag);
 }
 
 void object_free(Object* obj) {
@@ -85,7 +85,7 @@ void object_free(Object* obj) {
 }
 
 Object* object_from_address(HeapObject* obj) {
-  return (Object*)((uword)obj | kHeapObjectTag);
+  return (Object*)((uword)obj + kHeapObjectTag);
 }
 
 ObjectType object_type(Object* obj) {
