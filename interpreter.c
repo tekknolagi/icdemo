@@ -285,7 +285,7 @@ void eval_code_quickening(Frame* frame) {
       case ADD_INT: {
         Object* right = frame_pop(frame);
         Object* left = frame_pop(frame);
-        if (object_type(left) != kInt) {
+        if (object_type(left) != kInt || object_type(right) != kInt) {
           add_update_cache(frame, left, right);
           code->bytecode[current_pc(frame)] = ADD_CACHED;
           break;
