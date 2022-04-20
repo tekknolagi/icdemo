@@ -130,6 +130,11 @@ void init_frame(Frame* frame, Code* code, Object** args, word nargs) {
   frame->nargs = nargs;
 }
 
+void do_print(Object* obj) {
+  Method method = lookup_method(object_type(obj), kPrint);
+  (*method)(obj);
+}
+
 void eval_code_uncached(Frame* frame) {
   Code* code = frame->code;
   while (true) {
@@ -303,7 +308,8 @@ static const x86opnd_t kPCReg = RDX;
 static const x86opnd_t kOpcodeReg = BL;
 static const x86opnd_t kOpargReg = CL;
 static const x86opnd_t kOpargRegBig = RCX;
-static const x86opnd_t kUsedCalleeSavedRegs[] = {RBX};
+static const x86opnd_t kCalleeSavedRegs[] = {RBX, RSP, RBP, R12, R13, R14, R15};
+static const x86opnd_t kUsedCalleeSavedRegs[] = {RBX, R12};
 const word kNumCalleeSavedRegs = ARRAYSIZE(kUsedCalleeSavedRegs);
 const int kPointerSize = sizeof(void*);
 const word kFrameOffset = -kNumCalleeSavedRegs * kPointerSize;
@@ -355,15 +361,23 @@ void emit_next_opcode(codeblock_t* cb, Label* dispatch) {
 }
 
 void emit_restore_interpreter_state(codeblock_t* cb) {
+  // Load the interpreter stack
   mov(cb, RSP, member_opnd(kFrameReg, Frame, stack));
+  // Load the bytecode pointer into a register
+  mov(cb, kBCReg, member_opnd(kFrameReg, Frame, code));
+  mov(cb, kBCReg, member_opnd(kBCReg, Code, bytecode));
+  // Load PC
+  mov(cb, kPCReg, member_opnd(kFrameReg, Frame, pc));
 }
 
 // TODO(max): Figure out why this one and _at_end are different.
 void emit_restore_native_stack(codeblock_t* cb) {
+  // Save PC
+  mov(cb, member_opnd(kFrameReg, Frame, pc), kPCReg);
+  // Don't bother saving bytecode pointer
+  // Save interpreter stack
   mov(cb, member_opnd(kFrameReg, Frame, stack), RSP);
-  lea(cb, RSP,
-      mem_opnd(qword, RBP,
-               kNumCalleeSavedRegs * kPointerSize + kPaddingBytes));
+  lea(cb, RSP, mem_opnd(qword, RBP, -kNativeStackFrameSize));
 }
 
 // TODO(max): Figure out why this one and above are different.
@@ -413,13 +427,6 @@ void emit_asm_interpreter(codeblock_t* cb) {
   // Load the frame from the first arg
   mov(cb, kFrameReg, kArgRegs[0]);
   emit_restore_interpreter_state(cb);
-
-  // Load the bytecode pointer into a register
-  mov(cb, kBCReg, member_opnd(kFrameReg, Frame, code));
-  mov(cb, kBCReg, member_opnd(kBCReg, Code, bytecode));
-
-  // Initialize pc
-  xor(cb, kPCReg, kPCReg);
 
   // while (true) {
   B(dispatch);
@@ -490,13 +497,20 @@ void emit_asm_interpreter(codeblock_t* cb) {
   {
     BIND(handlers[PRINT]);
     // TODO(max): Call to C function
-    asm_error(cb, "unimplemented: PRINT", &error);
+    // asm_error(cb, "unimplemented: PRINT", &error);
+    pop(cb, kArgRegs[0]);
+    mov(cb, RAX, const_ptr_opnd((void*)do_print));
+    emit_restore_native_stack(cb);
+    // TODO(max): Figure out stack alignment
+    call(cb, RAX);
+    emit_restore_interpreter_state(cb);
+    emit_next_opcode(cb, &dispatch);
   }
 
   // Epilogue
   BIND(handlers[HALT]);
-  emit_restore_native_stack_at_end(cb);
-  for (word i = kNumCalleeSavedRegs - 1; i >= 0; --i) {
+  emit_restore_native_stack(cb);
+  for (word i = kNumCalleeSavedRegs - 1; i >= 0; i--) {
     pop(cb, kUsedCalleeSavedRegs[i]);
   }
   pop(cb, RBP);
@@ -553,7 +567,7 @@ int main(int argc, char** argv) {
   byte bytecode[] = {/*0:*/ ARG, 0,
                      /*2:*/ ARG, 1,
                      /*4:*/ ADD_INT, 0,
-                     // /*6:*/ PRINT, 0,
+                     /*6:*/ PRINT, 0,
                      /*8:*/ HALT, 0};
   Object* int_args[] = {
       new_int(5),
@@ -565,13 +579,13 @@ int main(int argc, char** argv) {
   eval(&frame);
   init_frame(&frame, &code, int_args, ARRAYSIZE(int_args));
   eval(&frame);
-  fprintf(stderr, "stack top: %ld\n", object_as_int(frame_pop(&frame)));
-  Object* str_args[] = {
-      new_str("hello "),
-      new_str("world"),
-  };
-  init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
-  eval(&frame);
-  init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
-  eval(&frame);
+  // // fprintf(stderr, "stack top: %ld\n", object_as_int(frame_pop(&frame)));
+  // Object* str_args[] = {
+  //     new_str("hello "),
+  //     new_str("world"),
+  // };
+  // init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
+  // eval(&frame);
+  // init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
+  // eval(&frame);
 }
