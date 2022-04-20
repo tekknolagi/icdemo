@@ -140,6 +140,7 @@ void eval_code_uncached(Frame* frame) {
   while (true) {
     Opcode op = code->bytecode[frame->pc];
     byte arg = code->bytecode[frame->pc + 1];
+    frame->pc += kBytecodeSize;
     switch (op) {
       case ARG:
         CHECK(arg < frame->nargs, "out of bounds arg");
@@ -165,23 +166,27 @@ void eval_code_uncached(Frame* frame) {
         fprintf(stderr, "unknown opcode %d\n", op);
         abort();
     }
-    frame->pc += kBytecodeSize;
   }
 }
 
+word current_pc(Frame* frame) {
+  // We advance before each opcode.
+  return frame->pc - kBytecodeSize;
+}
+
 static FORCE_INLINE CachedValue cache_at(Frame* frame) {
-  return frame->code->caches[frame->pc / kBytecodeSize];
+  return frame->code->caches[current_pc(frame) / kBytecodeSize];
 }
 
 static FORCE_INLINE void cache_at_put(Frame* frame, ObjectType key,
                                       Method value) {
-  frame->code->caches[frame->pc / kBytecodeSize] =
+  frame->code->caches[current_pc(frame) / kBytecodeSize] =
       (CachedValue){.key = key, .value = value};
 }
 
 void add_update_cache(Frame* frame, Object* left, Object* right) {
   Method method = lookup_method(object_type(left), kAdd);
-  fprintf(stderr, "updating cache at %ld\n", frame->pc);
+  fprintf(stderr, "updating cache at %ld\n", current_pc(frame));
   cache_at_put(frame, object_type(left), method);
   Object* result = (*method)(left, right);
   frame_push(frame, result);
@@ -192,6 +197,7 @@ void eval_code_cached(Frame* frame) {
   while (true) {
     Opcode op = code->bytecode[frame->pc];
     byte arg = code->bytecode[frame->pc + 1];
+    frame->pc += kBytecodeSize;
     switch (op) {
       case ARG:
         CHECK(arg < frame->nargs, "out of bounds arg");
@@ -206,7 +212,7 @@ void eval_code_cached(Frame* frame) {
           add_update_cache(frame, left, right);
           break;
         }
-        fprintf(stderr, "using cached value at %ld\n", frame->pc);
+        fprintf(stderr, "using cached value at %ld\n", current_pc(frame));
         Object* result = (*method)(left, right);
         frame_push(frame, result);
         break;
@@ -223,7 +229,6 @@ void eval_code_cached(Frame* frame) {
         fprintf(stderr, "unknown opcode %d\n", op);
         abort();
     }
-    frame->pc += kBytecodeSize;
   }
 }
 
@@ -233,16 +238,17 @@ void do_add_int(Frame* frame, Object* left, Object* right) {
 }
 
 void do_add_update_cache(Frame* frame) {
+  fprintf(stderr, "do_add_update_cache\n");
   Object* right = frame_pop(frame);
   Object* left = frame_pop(frame);
   Code* code = frame->code;
   if (object_type(left) == kInt) {
     do_add_int(frame, left, right);
-    code->bytecode[frame->pc] = ADD_INT;
+    code->bytecode[current_pc(frame)] = ADD_INT;
     return;
   }
   add_update_cache(frame, left, right);
-  code->bytecode[frame->pc] = ADD_CACHED;
+  code->bytecode[current_pc(frame)] = ADD_CACHED;
 }
 
 void eval_code_quickening(Frame* frame) {
@@ -250,6 +256,7 @@ void eval_code_quickening(Frame* frame) {
   while (true) {
     Opcode op = code->bytecode[frame->pc];
     byte arg = code->bytecode[frame->pc + 1];
+    frame->pc += kBytecodeSize;
     switch (op) {
       case ARG:
         CHECK(arg < frame->nargs, "out of bounds arg");
@@ -267,7 +274,7 @@ void eval_code_quickening(Frame* frame) {
           add_update_cache(frame, left, right);
           break;
         }
-        fprintf(stderr, "using cached value at %ld\n", frame->pc);
+        fprintf(stderr, "using cached value at %ld\n", current_pc(frame));
         Method method = cached.value;
         Object* result = (*method)(left, right);
         frame_push(frame, result);
@@ -278,7 +285,7 @@ void eval_code_quickening(Frame* frame) {
         Object* left = frame_pop(frame);
         if (object_type(left) != kInt) {
           add_update_cache(frame, left, right);
-          code->bytecode[frame->pc] = ADD_CACHED;
+          code->bytecode[current_pc(frame)] = ADD_CACHED;
           break;
         }
         do_add_int(frame, left, right);
@@ -296,7 +303,6 @@ void eval_code_quickening(Frame* frame) {
         fprintf(stderr, "unknown opcode %d\n", op);
         abort();
     }
-    frame->pc += kBytecodeSize;
   }
 }
 
@@ -362,6 +368,12 @@ void Label_bind(Label* label, codeblock_t* cb) {
 }
 
 void emit_next_opcode(codeblock_t* cb, Label* dispatch) {
+  movzx(cb, kOpcodeReg,
+        mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
+                     /*disp=*/0));
+  movzx(cb, kOpargReg,
+        mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
+                     /*disp=*/1));
   add(cb, kPCReg, imm_opnd(kBytecodeSize));
   jmp_label(cb, Label_index(dispatch));
 }
@@ -428,16 +440,10 @@ void emit_asm_interpreter(codeblock_t* cb) {
   emit_restore_interpreter_state(cb);
 
   // while (true) {
-  B(dispatch);
-  movzx(cb, kOpcodeReg,
-        mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
-                     /*disp=*/0));
-  movzx(cb, kOpargReg,
-        mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
-                     /*disp=*/1));
+  L(dispatch);
+  emit_next_opcode(cb, &dispatch);
 
-  L(error);
-
+  BIND(dispatch);
   Label handlers[NUM_OPCODES];
   for (word i = 0; i < NUM_OPCODES; i++) {
     cmp(cb, kOpcodeRegSmall, imm_opnd(i));
@@ -445,6 +451,7 @@ void emit_asm_interpreter(codeblock_t* cb) {
     je_label(cb, Label_index(&handlers[i]));
   }
   // Fall-through for invalid opcodes, I guess
+  L(error);
   asm_error(cb, "invalid opcode", &error);
 
   {
