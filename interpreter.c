@@ -6,6 +6,8 @@
 
 #include "objects.h"
 
+#define NORETURN __attribute__((noreturn))
+
 typedef word intptr_t;
 typedef uword uintptr_t;
 
@@ -307,7 +309,7 @@ void eval_code_quickening(Frame* frame) {
   }
 }
 
-__attribute__((noreturn)) void rb_bug(const char* msg) {
+NORETURN void rb_bug(const char* msg) {
   fprintf(stderr, "Error: %s\n", msg);
   abort();
 }
@@ -417,7 +419,7 @@ void emit_restore_native_stack(codeblock_t* cb) {
     op##_label(cb, R(name));            \
   } while (0)
 
-__attribute__((noreturn)) void report_error(const char* msg) {
+NORETURN void report_error(const char* msg) {
   fprintf(stderr, "Error from asm: %s\n", msg);
   abort();
 }
@@ -582,6 +584,11 @@ Code new_code(byte* bytecode, word num_opcodes) {
   return result;
 }
 
+NORETURN void usage() {
+  fprintf(stderr, "Usage: ./interpreter [uncached|cached|quickening|asm]\n");
+  exit(EXIT_FAILURE);
+}
+
 int main(int argc, char** argv) {
   EvalFunc eval = eval_code_uncached;
   if (argc == 2) {
@@ -596,13 +603,10 @@ int main(int argc, char** argv) {
       EvalFunc eval_code_assembly = gen_asm_interpreter();
       eval = eval_code_assembly;
     } else {
-      fprintf(stderr,
-              "Usage: ./interpreter [uncached|cached|quickening|asm]\n");
-      return EXIT_FAILURE;
+      usage();
     }
   } else if (argc > 2) {
-    fprintf(stderr, "Usage: ./interpreter [uncached|cached|quickening|asm]\n");
-    return EXIT_FAILURE;
+    usage();
   }
   byte bytecode[] = {/*0:*/ ARG,   0,
                      /*2:*/ ARG,   1,
