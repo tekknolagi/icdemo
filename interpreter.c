@@ -408,12 +408,13 @@ void emit_restore_native_stack(codeblock_t* cb) {
 #define B(name) \
   L(name);      \
   BIND(name)
+#define R(name) Label_index(&name)
 #define OP(op, name)                    \
   do {                                  \
     if (!Label_is_initialized(&name)) { \
       Label_init(&name, cb);            \
     }                                   \
-    op##_label(cb, Label_index(&name)); \
+    op##_label(cb, R(name));            \
   } while (0)
 
 __attribute__((noreturn)) void report_error(const char* msg) {
@@ -449,7 +450,7 @@ void emit_asm_interpreter(codeblock_t* cb) {
   for (word i = 0; i < NUM_OPCODES; i++) {
     cmp(cb, kOpcodeRegSmall, imm_opnd(i));
     INIT(handlers[i]);
-    je_label(cb, Label_index(&handlers[i]));
+    je_label(cb, R(handlers[i]));
   }
   // Fall-through for invalid opcodes, I guess
   L(error);
@@ -518,9 +519,9 @@ void emit_asm_interpreter(codeblock_t* cb) {
     CHECK(kIntegerTag == 0 && kIntegerShift == 1, "unexpected int tag");
     test(cb, r_left, imm_opnd(kIntegerTagMask));
     L(non_int);
-    jnz_label(cb, Label_index(&non_int));
+    jnz_label(cb, R(non_int));
     test(cb, r_right, imm_opnd(kIntegerTagMask));
-    jnz_label(cb, Label_index(&non_int));
+    jnz_label(cb, R(non_int));
     add(cb, r_left, r_right);
     push(cb, r_left);
     emit_next_opcode(cb, &dispatch);
