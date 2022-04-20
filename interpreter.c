@@ -232,6 +232,19 @@ void do_add_int(Frame* frame, Object* left, Object* right) {
   frame_push(frame, result);
 }
 
+void do_add_update_cache(Frame* frame) {
+  Object* right = frame_pop(frame);
+  Object* left = frame_pop(frame);
+  Code* code = frame->code;
+  if (object_type(left) == kInt) {
+    do_add_int(frame, left, right);
+    code->bytecode[frame->pc] = ADD_INT;
+    return;
+  }
+  add_update_cache(frame, left, right);
+  code->bytecode[frame->pc] = ADD_CACHED;
+}
+
 void eval_code_quickening(Frame* frame) {
   Code* code = frame->code;
   while (true) {
@@ -243,15 +256,7 @@ void eval_code_quickening(Frame* frame) {
         frame_push(frame, frame->args[arg]);
         break;
       case ADD: {
-        Object* right = frame_pop(frame);
-        Object* left = frame_pop(frame);
-        if (object_type(left) == kInt) {
-          do_add_int(frame, left, right);
-          code->bytecode[frame->pc] = ADD_INT;
-          break;
-        }
-        add_update_cache(frame, left, right);
-        code->bytecode[frame->pc] = ADD_CACHED;
+        do_add_update_cache(frame);
         break;
       }
       case ADD_CACHED: {
@@ -308,7 +313,8 @@ static const x86opnd_t kPCReg = RDX;
 static const x86opnd_t kOpcodeReg = BL;
 static const x86opnd_t kOpargReg = CL;
 static const x86opnd_t kOpargRegBig = RCX;
-static const x86opnd_t kCalleeSavedRegs[] = {RBX, RSP, RBP, R12, R13, R14, R15};
+static const x86opnd_t kCalleeSavedRegs[] = {RBX, RSP, RBP, R12,
+                                             R13, R14, R15};
 static const x86opnd_t kUsedCalleeSavedRegs[] = {RBX, R12};
 const word kNumCalleeSavedRegs = ARRAYSIZE(kUsedCalleeSavedRegs);
 const int kPointerSize = sizeof(void*);
@@ -455,8 +461,12 @@ void emit_asm_interpreter(codeblock_t* cb) {
 
   {
     BIND(handlers[ADD]);
-    // TODO(max): Call to C function
-    asm_error(cb, "unimplemented: ADD", &error);
+    emit_restore_native_stack(cb);
+    mov(cb, kArgRegs[0], kFrameReg);
+    mov(cb, RAX, const_ptr_opnd((void*)do_add_update_cache));
+    call(cb, RAX);
+    emit_restore_interpreter_state(cb);
+    emit_next_opcode(cb, &dispatch);
   }
 
   {
@@ -489,12 +499,9 @@ void emit_asm_interpreter(codeblock_t* cb) {
 
   {
     BIND(handlers[PRINT]);
-    // TODO(max): Call to C function
-    // asm_error(cb, "unimplemented: PRINT", &error);
     pop(cb, kArgRegs[0]);
-    mov(cb, RAX, const_ptr_opnd((void*)do_print));
     emit_restore_native_stack(cb);
-    // TODO(max): Figure out stack alignment
+    mov(cb, RAX, const_ptr_opnd((void*)do_print));
     call(cb, RAX);
     emit_restore_interpreter_state(cb);
     emit_next_opcode(cb, &dispatch);
@@ -557,11 +564,11 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Usage: ./interpreter [uncached|cached|quickening|asm]\n");
     return EXIT_FAILURE;
   }
-  byte bytecode[] = {/*0:*/ ARG, 0,
-                     /*2:*/ ARG, 1,
-                     /*4:*/ ADD_INT, 0,
+  byte bytecode[] = {/*0:*/ ARG,   0,
+                     /*2:*/ ARG,   1,
+                     /*4:*/ ADD,   0,
                      /*6:*/ PRINT, 0,
-                     /*8:*/ HALT, 0};
+                     /*8:*/ HALT,  0};
   Object* int_args[] = {
       new_int(5),
       new_int(10),
