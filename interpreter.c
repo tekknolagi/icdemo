@@ -156,8 +156,7 @@ void eval_code_uncached(Frame* frame) {
       }
       case PRINT: {
         Object* obj = frame_pop(frame);
-        Method method = lookup_method(object_type(obj), kPrint);
-        (*method)(obj);
+        do_print(obj);
         break;
       }
       case HALT:
@@ -219,8 +218,7 @@ void eval_code_cached(Frame* frame) {
       }
       case PRINT: {
         Object* obj = frame_pop(frame);
-        Method method = lookup_method(object_type(obj), kPrint);
-        (*method)(obj);
+        do_print(obj);
         break;
       }
       case HALT:
@@ -297,8 +295,7 @@ void eval_code_quickening(Frame* frame) {
       }
       case PRINT: {
         Object* obj = frame_pop(frame);
-        Method method = lookup_method(object_type(obj), kPrint);
-        (*method)(obj);
+        do_print(obj);
         break;
       }
       case HALT:
