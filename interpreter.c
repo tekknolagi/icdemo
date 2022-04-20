@@ -370,7 +370,6 @@ void emit_restore_interpreter_state(codeblock_t* cb) {
   mov(cb, kPCReg, member_opnd(kFrameReg, Frame, pc));
 }
 
-// TODO(max): Figure out why this one and _at_end are different.
 void emit_restore_native_stack(codeblock_t* cb) {
   // Save PC
   mov(cb, member_opnd(kFrameReg, Frame, pc), kPCReg);
@@ -378,12 +377,6 @@ void emit_restore_native_stack(codeblock_t* cb) {
   // Save interpreter stack
   mov(cb, member_opnd(kFrameReg, Frame, stack), RSP);
   lea(cb, RSP, mem_opnd(qword, RBP, -kNativeStackFrameSize));
-}
-
-// TODO(max): Figure out why this one and above are different.
-void emit_restore_native_stack_at_end(codeblock_t* cb) {
-  mov(cb, member_opnd(kFrameReg, Frame, stack), RSP);
-  lea(cb, RSP, mem_opnd(qword, RBP, -kNumCalleeSavedRegs * kPointerSize));
 }
 
 #define INIT(name)         \
@@ -579,13 +572,13 @@ int main(int argc, char** argv) {
   eval(&frame);
   init_frame(&frame, &code, int_args, ARRAYSIZE(int_args));
   eval(&frame);
-  // // fprintf(stderr, "stack top: %ld\n", object_as_int(frame_pop(&frame)));
-  // Object* str_args[] = {
-  //     new_str("hello "),
-  //     new_str("world"),
-  // };
-  // init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
-  // eval(&frame);
-  // init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
-  // eval(&frame);
+  // fprintf(stderr, "stack top: %ld\n", object_as_int(frame_pop(&frame)));
+  Object* str_args[] = {
+      new_str("hello "),
+      new_str("world"),
+  };
+  init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
+  eval(&frame);
+  init_frame(&frame, &code, str_args, ARRAYSIZE(str_args));
+  eval(&frame);
 }
