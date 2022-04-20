@@ -7,4 +7,4 @@ build/interpreter: interpreter.c objects.h yjit_asm.h yjit_asm.c
 	$(CC) $(CFLAGS) interpreter.c $(LDFLAGS) -o $@
 
 make clean:
-	rm interpreter
+	rm build/interpreter
