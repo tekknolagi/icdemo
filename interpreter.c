@@ -310,9 +310,9 @@ __attribute__((noreturn)) void rb_bug(const char* msg) {
 static const x86opnd_t kBCReg = RAX;
 static const x86opnd_t kFrameReg = R12;
 static const x86opnd_t kPCReg = RDX;
-static const x86opnd_t kOpcodeReg = BL;
-static const x86opnd_t kOpargReg = CL;
-static const x86opnd_t kOpargRegBig = RCX;
+static const x86opnd_t kOpcodeReg = RBX;
+static const x86opnd_t kOpcodeRegSmall = BL;
+static const x86opnd_t kOpargReg = RCX;
 static const x86opnd_t kCalleeSavedRegs[] = {RBX, RSP, RBP, R12,
                                              R13, R14, R15};
 static const x86opnd_t kUsedCalleeSavedRegs[] = {RBX, R12};
@@ -429,18 +429,18 @@ void emit_asm_interpreter(codeblock_t* cb) {
 
   // while (true) {
   B(dispatch);
-  mov(cb, kOpcodeReg,
-      mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
-                   /*disp=*/0));
-  mov(cb, kOpargReg,
-      mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
-                   /*disp=*/1));
+  movzx(cb, kOpcodeReg,
+        mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
+                     /*disp=*/0));
+  movzx(cb, kOpargReg,
+        mem_opnd_sib(/*size=*/1 * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
+                     /*disp=*/1));
 
   L(error);
 
   Label handlers[NUM_OPCODES];
   for (word i = 0; i < NUM_OPCODES; i++) {
-    cmp(cb, kOpcodeReg, imm_opnd(i));
+    cmp(cb, kOpcodeRegSmall, imm_opnd(i));
     INIT(handlers[i]);
     je_label(cb, Label_index(&handlers[i]));
   }
@@ -453,9 +453,8 @@ void emit_asm_interpreter(codeblock_t* cb) {
     // Object** args = frame->args
     mov(cb, r_scratch, member_opnd(kFrameReg, Frame, args));
     // push(args[arg])
-    push(cb,
-         mem_opnd_sib(qword, r_scratch, kOpargRegBig, /*scale=*/kPointerSize,
-                      /*disp=*/0));
+    push(cb, mem_opnd_sib(qword, r_scratch, kOpargReg, /*scale=*/kPointerSize,
+                          /*disp=*/0));
     emit_next_opcode(cb, &dispatch);
   }
 
