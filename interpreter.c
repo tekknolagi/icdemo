@@ -7,6 +7,9 @@
 #include "ujit_asm.h"
 
 #define FORCE_INLINE __attribute__((always_inline)) inline
+#define NEVER_INLINE __attribute__((noinline)) __attribute__((never_inline))
+
+
 
 #if defined(NDEBUG)
 #define CHECK
@@ -221,7 +224,7 @@ typedef enum {
 
 #define ARRAYSIZE(ARR) (sizeof(ARR) / sizeof(ARR)[0])
 
-Method lookup_method(ObjectType type, Symbol name) {
+NEVER_INLINE Method lookup_method(ObjectType type, Symbol name) {
   CHECK(type < ARRAYSIZE(kTypes) && "out of bounds type");
   const MethodDefinition* table = kTypes[type];
   for (word i = 0; table[i].method != NULL; i++) {
@@ -237,12 +240,12 @@ static unsigned kBytecodeSize = 2;
 #define STACK_SIZE 100
 
 typedef struct {
-  Object* stack_array[STACK_SIZE];
   Object** stack;
   Code* code;
   word pc;
   Object** args;
   word nargs;
+  Object* stack_array[STACK_SIZE];
 } Frame;
 
 typedef void (*EvalFunc)(Frame* frame);
@@ -267,6 +270,12 @@ void init_frame(Frame* frame, Code* code, Object** args, word nargs) {
   frame->nargs = nargs;
 }
 
+void do_print(Frame* frame) {
+  Object* obj = frame_pop(frame);
+  Method method = lookup_method(object_type(obj), kPrint);
+  (*method)(obj);
+}
+
 void eval_code_uncached(Frame* frame) {
   Code* code = frame->code;
   while (true) {
@@ -286,9 +295,7 @@ void eval_code_uncached(Frame* frame) {
         break;
       }
       case PRINT: {
-        Object* obj = frame_pop(frame);
-        Method method = lookup_method(object_type(obj), kPrint);
-        (*method)(obj);
+        do_print(frame);
         break;
       }
       case HALT:
@@ -344,9 +351,7 @@ void eval_code_cached(Frame* frame) {
         break;
       }
       case PRINT: {
-        Object* obj = frame_pop(frame);
-        Method method = lookup_method(object_type(obj), kPrint);
-        (*method)(obj);
+        do_print(frame);
         break;
       }
       case HALT:
@@ -412,9 +417,7 @@ void eval_code_quickening(Frame* frame) {
         break;
       }
       case PRINT: {
-        Object* obj = frame_pop(frame);
-        Method method = lookup_method(object_type(obj), kPrint);
-        (*method)(obj);
+        do_print(frame);
         break;
       }
       case HALT:
@@ -443,70 +446,155 @@ Label new_label(codeblock_t* cb, const char* name) {
   return (Label){.idx = cb_new_label(cb, name)};
 }
 
-void bind(codeblock_t* cb, Label label) {
-  cb_label_ref(cb, label.idx);
+void bind(codeblock_t* cb, Label label) { cb_label_ref(cb, label.idx); }
+
+#define L(name)                      \
+  Label name = new_label(cb, #name); \
+  cb_write_label(cb, name.idx)
+
+#define bind(name) cb_write_label(cb, name.idx)
+
+static const x86opnd_t kBCReg = RAX;
+static const x86opnd_t kFrameReg = RBX;
+static const x86opnd_t kOpargReg = RCX;
+static const x86opnd_t kPCReg = RDX;
+static const x86opnd_t kOpcodeReg = RDI;
+static const x86opnd_t kCalleeSavedRegisters[] = {RBX, R12, R13, R14, R15};
+static const word kNumCalleeSavedRegisters = ARRAYSIZE(kCalleeSavedRegisters);
+
+void save_interpreter_state(codeblock_t* cb) {
+  mov(cb, member_opnd(kFrameReg, Frame, pc), kPCReg);
+  mov(cb, member_opnd(kFrameReg, Frame, stack), RSP);
+  // TODO(max): load RBP minus callee saved register space to RSP
 }
 
-#define L(name) do { \
-  Label name = new_label(cb, #name); \
-  cb_label_ref(cb, name.idx); \
-} while(0)
-
-//static const x86opnd_t kArgRegs[] = C_ARG_REGS;
-static const x86opnd_t kBCReg = RAX;
-static const x86opnd_t kFrameReg = RDI;
-static const x86opnd_t kPCReg = RDX;
-static const x86opnd_t kOpcodeReg = BL;
-static const x86opnd_t kOpargReg = CL;
-static const x86opnd_t kOpargRegBig = RCX;
+void reload_interpreter_state(codeblock_t* cb) {
+  mov(cb, kPCReg, member_opnd(kFrameReg, Frame, pc));
+  {
+    mov(cb, kBCReg, member_opnd(kFrameReg, Frame, code));
+    mov(cb, kBCReg, member_opnd(kBCReg, Code, bytecode));
+  }
+  mov(cb, RSP, member_opnd(kFrameReg, Frame, stack));
+}
 
 void emit_next_opcode(codeblock_t* cb, Label dispatch) {
+  mov(cb, kOpcodeReg,
+      mem_opnd_sib(kWordSize * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
+                   /*disp=*/0));
+  mov(cb, kOpargReg,
+      mem_opnd_sib(kWordSize * kBitsPerByte, kBCReg, kPCReg, /*scale=*/1,
+                   /*disp=*/1));
   add(cb, kPCReg, imm_opnd(kBytecodeSize));
-  jmp(cb, dispatch.idx);
+  jmp_label(cb, dispatch.idx);
 }
 
-static const int kByteSize = sizeof(byte) * kBitsPerByte;
+void emit_simple(codeblock_t* cb) {
+  int3(cb);
+  // Prologue
+  push(cb, RBP);
+  mov(cb, RBP, RSP);
+
+  mov(cb, RAX, imm_opnd(42));
+
+  // Epilogue
+  mov(cb, RSP, RBP);
+  pop(cb, RBP);
+
+  ret(cb);
+}
 
 void emit_assembly_interpreter(codeblock_t* cb) {
-  // Load the frame from the first arg
-  mov(cb, kFrameReg, C_ARG_REGS[0]);
-  // Load the bytecode pointer into a register
-  mov(cb, kBCReg, member_opnd(kFrameReg, Frame, code));
-  mov(cb, kBCReg, member_opnd(kBCReg, Code, bytecode));
-  // Initialize PC
-  xor(cb, kPCReg, kPCReg);
-
-  // while (true) {
-  L(dispatch);
-  mov(cb, kOpcodeReg, mem_opnd_sib(kByteSize, kBCReg, kPCReg, /*scale=*/1, /*disp=*/0));
-  mov(cb, kOpargReg, mem_opnd_sib(kByteSize, kBCReg, kPCReg, /*scale=*/1, /*disp=*/1));
-
-  // TODO(max): Make dispatch via a jump table instead of a series of
-  // comparisons.
-  /*
-         Label labelTbl, L0, L1, L2;
-         mov(rax, labelTbl);
-         // rdx is an index of jump table
-         jmp(ptr [rax + rdx * sizeof(void*)]);
-      L(labelTbl);
-         putL(L0);
-         putL(L1);
-         putL(L2);
-      L(L0);
-         ....
-      L(L1);
-         ....
-  */
+  Label dispatch = new_label(cb, "dispatch");
   Label handlers[NUM_OPCODES];
   for (word i = 0; i < NUM_OPCODES; i++) {
     handlers[i] = new_label(cb, "unnamed");
-    cmp(cb, kOpcodeReg, imm_opnd(i));
-    je(cb, handlers[i].idx);
   }
 
-  // TODO(max): Remove filler
-  mov(cb, RAX, imm_opnd(42));
-  ret(cb);
+  int3(cb);
+
+  // Prolog
+  push(cb, RBP);
+  // mov(cb, RBP, RSP);
+  // for (word i = 0; i < kNumCalleeSavedRegisters; i++) {
+  //   push(cb, kCalleeSavedRegisters[i]);
+  // }
+
+  // // Load the frame from the first arg
+  // mov(cb, kFrameReg, C_ARG_REGS[0]);
+  // reload_interpreter_state(cb);
+  // emit_next_opcode(cb, dispatch);
+
+  // // TODO(max): Make dispatch via a jump table instead of a series of
+  // // comparisons.
+  // /*
+  //        Label labelTbl, L0, L1, L2;
+  //        mov(rax, labelTbl);
+  //        // rdx is an index of jump table
+  //        jmp(ptr [rax + rdx * sizeof(void*)]);
+  //     L(labelTbl);
+  //        putL(L0);
+  //        putL(L1);
+  //        putL(L2);
+  //     L(L0);
+  //        ....
+  //     L(L1);
+  //        ....
+  // */
+
+  // bind(handlers[ARG]);
+  // {
+  //   x86opnd_t r_scratch = R8;
+  //   // Object** args = frame->args
+  //   mov(cb, r_scratch, member_opnd(kFrameReg, Frame, args));
+  //   // push(args[arg])
+  //   push(cb, mem_opnd_sib(kWordSize * kBitsPerByte, r_scratch, kOpargReg,
+  //                         /*scale=*/kWordSize, /*disp=*/0));
+  //   emit_next_opcode(cb, dispatch);
+  // }
+
+  // bind(handlers[ADD_INT]);
+  // {
+  //   x86opnd_t r_right = R8;
+  //   x86opnd_t r_left = R9;
+  //   pop(cb, r_left);
+  //   pop(cb, r_right);
+  //   add(cb, r_left, r_right);
+  //   push(cb, r_left);
+  //   emit_next_opcode(cb, dispatch);
+  // }
+
+  // bind(handlers[PRINT]);
+  // {
+  //   int3(cb);
+  //   x86opnd_t r_scratch = R8;
+  //   save_interpreter_state(cb);
+  //   mov(cb, C_ARG_REGS[0], kFrameReg);
+  //   call_ptr(cb, r_scratch, do_print);
+  //   reload_interpreter_state(cb);
+  //   emit_next_opcode(cb, dispatch);
+  // }
+
+  // bind(handlers[HALT]);
+  // {
+  //   // Epilog
+  //   // lea(cb, RBP, mem_opnd(64, RBP, -kNumCalleeSavedRegisters * kWordSize));
+  //   // for (word i = kNumCalleeSavedRegisters - 1; i >= 0; i--) {
+  //   //   pop(cb, kCalleeSavedRegisters[i]);
+  //   // }
+  //   pop(cb, RBP);
+  //   // Don't return anything; leave value on the stack
+  //   ret(cb);
+  // }
+
+  // bind(dispatch);
+  // for (word i = 0; i < NUM_OPCODES; i++) {
+  //   handlers[i] = new_label(cb, "unnamed");
+  //   cmp(cb, kOpcodeReg, imm_opnd(i));
+  //   je_label(cb, handlers[i].idx);
+  // }
+
+  // Fallback for missing handler
+  int3(cb);
 }
 
 typedef Object* (*Func)(Frame* frame);
@@ -520,7 +608,8 @@ Func gen_assembly_interpreter() {
   word mem_size = 1 * kGiB;
   byte* memory = alloc_exec_mem(mem_size);
   cb_init(&cb, memory, mem_size);
-  emit_assembly_interpreter(&cb);
+  emit_simple(&cb);
+  cb_link_labels(&cb);
   return (Func)memory;
 }
 
@@ -570,7 +659,7 @@ int old_main(int argc, char** argv) {
 int main(int argc, char** argv) {
   Func eval = gen_assembly_interpreter();
   byte bytecode[] = {
-      ARG, 0, ARG, 1, ADD_INT, 0, HALT, 0,
+      ARG, 0, ARG, 1, ADD_INT, 0, PRINT, 0, HALT, 0,
   };
   Object* int_args[] = {
       new_int(5),
@@ -583,7 +672,8 @@ int main(int argc, char** argv) {
   Frame frame;
   Code code = new_code(bytecode, sizeof bytecode / kBytecodeSize);
   init_frame(&frame, &code, int_args, ARRAYSIZE(int_args));
-  eval(&frame);
+  Object* result = eval(&frame);
+  fprintf(stderr, "result: %p (%d)\n", result, object_as_int(result));
   // eval(&code, int_args, ARRAYSIZE(int_args));
   // eval(&code, str_args, ARRAYSIZE(str_args));
   // eval(&code, str_args, ARRAYSIZE(str_args));
